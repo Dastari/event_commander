@@ -44,11 +44,13 @@ const LOG_NAMES: [&str; 5] = [
     "ForwardedEvents",
 ];
 
+/// Converts a string slice to a null-terminated wide UTF-16 encoded vector.
 #[cfg(target_os = "windows")]
 fn to_wide_string(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+/// Renders the event XML from an event handle using the Windows Event Log API.
 #[cfg(target_os = "windows")]
 fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
     unsafe {
@@ -85,28 +87,20 @@ fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
     }
 }
 
-fn find_attribute_value<'a>(xml: &'a str, attribute_name: &str) -> Option<&'a str> {
-    if let Some(start_pos) = xml.find(&format!("{}='", attribute_name)) {
-        let sub = &xml[start_pos + attribute_name.len() + 2..];
-        sub.find('\'').map(|end_pos| &sub[..end_pos])
-    } else if let Some(start_pos) = xml.find(&format!("{}=\"", attribute_name)) {
-        let sub = &xml[start_pos + attribute_name.len() + 2..];
-        sub.find('"').map(|end_pos| &sub[..end_pos])
-    } else {
-        None
-    }
-}
-
+/// Retrieves the text of a child element with the specified name from a parent element.
+/// Returns an empty string if the child does not exist.
 fn get_child_text(parent: &Element, child_name: &str) -> String {
     parent
         .get_child(child_name, EVENT_XML_NS)
         .map_or(String::new(), |el| el.text().to_string())
 }
 
+/// Gets the value of the specified attribute from an element.
 fn get_attr(element: &Element, attr_name: &str) -> Option<String> {
     element.attr(attr_name).map(str::to_string)
 }
 
+/// Formats Windows Error Reporting event data from a minidom XML element.
 #[cfg(target_os = "windows")]
 fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
     let mut data_map = HashMap::new();
@@ -119,8 +113,7 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
         }
     }
     let mut result = String::new();
-    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType"))
-    {
+    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType")) {
         result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
     }
     if let Some(event_name) = data_map.get("EventName") {
@@ -172,6 +165,7 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
     result.trim_end().to_string()
 }
 
+/// Formats generic event data from a minidom XML element.
 fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
     event_data_element
         .children()
@@ -189,6 +183,7 @@ fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
         .join("\n")
 }
 
+/// Parses an event XML string and returns a DisplayEvent struct with extracted data.
 #[cfg(target_os = "windows")]
 fn parse_event_xml(xml: &str) -> DisplayEvent {
     let root: Result<Element, _> = xml.parse();
@@ -250,6 +245,7 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
     }
 }
 
+/// Represents an event with displayable information.
 #[derive(Clone, Debug)]
 struct DisplayEvent {
     level: String,
@@ -260,6 +256,7 @@ struct DisplayEvent {
     raw_data: String,
 }
 
+/// Represents a status dialog with a title, message, and state flags.
 #[derive(Debug, Clone)]
 struct StatusDialog {
     title: String,
@@ -268,12 +265,14 @@ struct StatusDialog {
     is_error: bool,
 }
 
+/// Represents the view mode for event details: either formatted or raw XML.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum DetailsViewMode {
     Formatted,
     RawXml,
 }
 
+/// Contains details for a selected event including formatted content, raw XML, and view state.
 #[derive(Debug, Clone)]
 struct EventDetailsDialog {
     title: String,
@@ -290,6 +289,7 @@ struct EventDetailsDialog {
 }
 
 impl StatusDialog {
+    /// Creates a new StatusDialog with the given title, message, and error flag.
     fn new(title: &str, message: &str, is_error: bool) -> Self {
         Self {
             title: title.to_string(),
@@ -298,12 +298,14 @@ impl StatusDialog {
             is_error,
         }
     }
+    /// Dismisses the status dialog.
     fn dismiss(&mut self) {
         self.visible = false;
     }
 }
 
 impl EventDetailsDialog {
+    /// Creates a new EventDetailsDialog with provided details and initializes view state.
     fn new(
         title: &str,
         formatted_content: &str,
@@ -327,9 +329,11 @@ impl EventDetailsDialog {
             current_visible_height: 0,
         }
     }
+    /// Dismisses the event details dialog.
     fn dismiss(&mut self) {
         self.visible = false;
     }
+    /// Toggles between the formatted and raw XML view modes.
     fn toggle_view(&mut self) {
         self.view_mode = match self.view_mode {
             DetailsViewMode::Formatted => DetailsViewMode::RawXml,
@@ -337,6 +341,7 @@ impl EventDetailsDialog {
         };
         self.scroll_position = 0;
     }
+    /// Returns the currently active content based on the view mode.
     fn current_content(&self) -> String {
         match self.view_mode {
             DetailsViewMode::Formatted => self.formatted_content.clone(),
@@ -349,9 +354,11 @@ impl EventDetailsDialog {
             },
         }
     }
+    /// Scrolls the content up by one line.
     fn scroll_up(&mut self) {
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
+    /// Scrolls the content down by one line.
     fn scroll_down(&mut self, visible_height: usize) {
         let content_lines = self.current_content().trim_end().lines().count();
         let max_scroll = content_lines.saturating_sub(visible_height.max(1));
@@ -359,23 +366,28 @@ impl EventDetailsDialog {
             self.scroll_position += 1;
         }
     }
+    /// Scrolls the content up by ten lines (page up).
     fn page_up(&mut self) {
         self.scroll_position = self.scroll_position.saturating_sub(10);
     }
+    /// Scrolls the content down by ten lines (page down).
     fn page_down(&mut self, visible_height: usize) {
         let content_lines = self.current_content().trim_end().lines().count();
         let max_scroll = content_lines.saturating_sub(visible_height.max(1));
         self.scroll_position = self.scroll_position.saturating_add(10).min(max_scroll);
     }
+    /// Scrolls the content to the top.
     fn go_to_top(&mut self) {
         self.scroll_position = 0;
     }
+    /// Scrolls the content to the bottom.
     fn go_to_bottom(&mut self, visible_height: usize) {
         let content_lines = self.current_content().trim_end().lines().count();
         self.scroll_position = content_lines.saturating_sub(visible_height.max(1));
     }
 }
 
+/// Represents an event level filter for displaying events.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum EventLevelFilter {
     #[default]
@@ -386,6 +398,7 @@ enum EventLevelFilter {
 }
 
 impl EventLevelFilter {
+    /// Cycles to the next event level filter.
     fn next(&self) -> Self {
         match self {
             Self::All => Self::Information,
@@ -394,6 +407,7 @@ impl EventLevelFilter {
             Self::Error => Self::All,
         }
     }
+    /// Cycles to the previous event level filter.
     fn previous(&self) -> Self {
         match self {
             Self::All => Self::Error,
@@ -402,6 +416,7 @@ impl EventLevelFilter {
             Self::Error => Self::Warning,
         }
     }
+    /// Returns a display-friendly name for the filter.
     fn display_name(&self) -> &str {
         match self {
             Self::All => "All",
@@ -410,6 +425,7 @@ impl EventLevelFilter {
             Self::Error => "Error/Crit",
         }
     }
+    /// Returns the corresponding XPath query filter string.
     fn to_xpath_query(&self) -> String {
         match self {
             Self::All => "*".to_string(),
@@ -420,6 +436,7 @@ impl EventLevelFilter {
     }
 }
 
+/// Represents which panel is currently focused in the TUI.
 #[derive(PartialEq, Debug, Clone, Copy)]
 enum PanelFocus {
     Logs,
@@ -427,6 +444,7 @@ enum PanelFocus {
     Preview,
 }
 
+/// Represents criteria for filtering events.
 #[derive(Debug, Clone, Default)]
 struct FilterCriteria {
     source: Option<String>,
@@ -434,6 +452,7 @@ struct FilterCriteria {
     level: EventLevelFilter,
 }
 
+/// Represents which field is focused in the filter dialog.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FilterFieldFocus {
     Source,
@@ -443,6 +462,7 @@ enum FilterFieldFocus {
     Clear,
 }
 
+/// Represents actions to be taken after a key press is handled.
 enum PostKeyPressAction {
     None,
     ReloadData,
@@ -451,6 +471,7 @@ enum PostKeyPressAction {
     Quit,
 }
 
+/// Holds the entire state of the application.
 struct AppState {
     focus: PanelFocus,
     selected_log_index: usize,
@@ -480,9 +501,12 @@ struct AppState {
     filter_dialog_source_input: String,
     filter_dialog_filtered_sources: Vec<(usize, String)>,
     filter_dialog_filtered_source_selection: Option<usize>,
+    help_dialog_visible: bool, 
+    help_scroll_position: usize,
 }
 
 #[cfg(target_os = "windows")]
+/// Loads available event log sources using the Windows Event Log API.
 fn load_available_sources(app: &mut AppState) -> Option<Vec<String>> {
     let mut sources = Vec::new();
     let publisher_enum_handle = match unsafe { EvtOpenPublisherEnum(None, 0) } {
@@ -550,6 +574,7 @@ fn load_available_sources(app: &mut AppState) -> Option<Vec<String>> {
 }
 
 impl AppState {
+    /// Creates a new AppState with default configuration and opens the log file.
     fn new() -> Self {
         let log_file = std::fs::OpenOptions::new()
             .create(true)
@@ -557,7 +582,7 @@ impl AppState {
             .append(true)
             .open("event_commander.log")
             .ok();
-        let state = Self {
+        Self {
             focus: PanelFocus::Logs,
             selected_log_index: 0,
             selected_log_name: String::new(),
@@ -586,12 +611,13 @@ impl AppState {
             filter_dialog_source_input: String::new(),
             filter_dialog_filtered_sources: Vec::new(),
             filter_dialog_filtered_source_selection: None,
-        };
-        state
+            help_dialog_visible: false, 
+            help_scroll_position: 0,
+        }
     }
+    /// Logs a message to the log file if the message indicates an error.
     fn log(&mut self, message: &str) {
         if let Some(file) = &mut self.log_file {
-            // Only log messages indicating errors from Event Log API calls.
             if message.contains("Error")
                 || message.contains("Failed")
                 || message.contains("GetLastError")
@@ -604,13 +630,16 @@ impl AppState {
             }
         }
     }
+    /// Shows an error dialog with the given title and message.
     fn show_error(&mut self, title: &str, message: &str) {
         self.status_dialog = Some(StatusDialog::new(title, message, true));
         self.log(&format!("ERROR - {}: {}", title, message));
     }
+    /// Shows a confirmation dialog with the given title and message.
     fn show_confirmation(&mut self, title: &str, message: &str) {
         self.status_dialog = Some(StatusDialog::new(title, message, false));
     }
+    /// Displays event details for the currently selected event.
     fn show_event_details(&mut self) {
         if let Some(selected) = self.table_state.selected() {
             if let Some(event) = self.events.get(selected) {
@@ -634,6 +663,7 @@ impl AppState {
             }
         }
     }
+    /// Starts or continues loading event logs; initializes the query if it's the initial load.
     #[cfg(target_os = "windows")]
     fn start_or_continue_log_load(&mut self, initial_load: bool) {
         if self.is_loading || (!initial_load && self.no_more_events) {
@@ -731,18 +761,19 @@ impl AppState {
         }
         self.is_loading = false;
     }
+    /// Switches to the next log in the list and clears the active filter.
     fn next_log(&mut self) {
         if self.selected_log_index < LOG_NAMES.len() - 1 {
             self.selected_log_index += 1;
         }
-        // Always clear the filter when switching logs
         self.active_filter = None;
     }
+    /// Switches to the previous log in the list and clears the active filter.
     fn previous_log(&mut self) {
         self.selected_log_index = self.selected_log_index.saturating_sub(1);
-        // Always clear the filter when switching logs
         self.active_filter = None;
     }
+    /// Scrolls down one event in the event list; loads more events if near the end.
     fn scroll_down(&mut self) {
         if self.events.is_empty() {
             self.select_event(None);
@@ -756,6 +787,7 @@ impl AppState {
             self.start_or_continue_log_load(false);
         }
     }
+    /// Scrolls up one event in the event list.
     fn scroll_up(&mut self) {
         if self.events.is_empty() {
             self.select_event(None);
@@ -764,6 +796,7 @@ impl AppState {
         let i = self.table_state.selected().unwrap_or(0).saturating_sub(1);
         self.select_event(Some(i));
     }
+    /// Scrolls down one page in the event list; loads more events if near the end.
     fn page_down(&mut self) {
         if self.events.is_empty() {
             self.select_event(None);
@@ -779,6 +812,7 @@ impl AppState {
             self.start_or_continue_log_load(false);
         }
     }
+    /// Scrolls up one page in the event list.
     fn page_up(&mut self) {
         if self.events.is_empty() {
             self.select_event(None);
@@ -792,11 +826,13 @@ impl AppState {
             .saturating_sub(page_size);
         self.select_event(Some(i));
     }
+    /// Selects the top event in the event list.
     fn go_to_top(&mut self) {
         if !self.events.is_empty() {
             self.select_event(Some(0));
         }
     }
+    /// Selects the bottom event in the event list and loads more events if necessary.
     fn go_to_bottom(&mut self) {
         if !self.events.is_empty() {
             let last_index = self.events.len().saturating_sub(1);
@@ -805,6 +841,7 @@ impl AppState {
             self.start_or_continue_log_load(false);
         }
     }
+    /// Cycles the focus among the Logs, Events, and Preview panels.
     fn switch_focus(&mut self) {
         self.focus = match self.focus {
             PanelFocus::Logs => PanelFocus::Events,
@@ -812,22 +849,28 @@ impl AppState {
             PanelFocus::Preview => PanelFocus::Logs,
         };
     }
+    /// Scrolls the preview panel down by a specified number of lines.
     fn preview_scroll_down(&mut self, lines: u16) {
         self.preview_scroll = self.preview_scroll.saturating_add(lines);
     }
+    /// Scrolls the preview panel up by a specified number of lines.
     fn preview_scroll_up(&mut self, lines: u16) {
         self.preview_scroll = self.preview_scroll.saturating_sub(lines);
     }
+    /// Scrolls the preview panel to the top.
     fn preview_go_to_top(&mut self) {
         self.preview_scroll = 0;
     }
+    /// Resets the preview scroll position.
     fn reset_preview_scroll(&mut self) {
         self.preview_scroll = 0;
     }
+    /// Selects an event by index in the event table and resets preview scroll.
     fn select_event(&mut self, index: Option<usize>) {
         self.table_state.select(index);
         self.reset_preview_scroll();
     }
+    /// Determines if an event matches the provided search term.
     fn event_matches_search(&self, event: &DisplayEvent, term_lower: &str) -> bool {
         event.level.to_lowercase().contains(term_lower)
             || event.datetime.to_lowercase().contains(term_lower)
@@ -835,6 +878,7 @@ impl AppState {
             || event.id.to_lowercase().contains(term_lower)
             || event.message.to_lowercase().contains(term_lower)
     }
+    /// Finds the next matching event based on the active search term.
     fn find_next_match(&mut self) -> bool {
         if self.events.is_empty() {
             self.show_confirmation("Search", "No events to search.");
@@ -867,6 +911,7 @@ impl AppState {
         self.show_confirmation("Search", "No further matches found (searched from top).");
         false
     }
+    /// Finds the previous matching event based on the active search term.
     fn find_previous_match(&mut self) -> bool {
         if self.events.is_empty() {
             self.show_confirmation("Search", "No events to search.");
@@ -904,6 +949,7 @@ impl AppState {
         );
         false
     }
+    /// Builds an XPath query string based on the active filter criteria.
     fn build_xpath_from_filter(&self) -> String {
         if let Some(filter) = &self.active_filter {
             let mut conditions = Vec::new();
@@ -940,6 +986,7 @@ impl AppState {
             self.filter_level.to_xpath_query()
         }
     }
+    /// Updates the filtered source list based on the filter dialog's input.
     fn update_filtered_sources(&mut self) {
         if self.available_sources.is_none() {
             self.filter_dialog_filtered_sources.clear();
@@ -947,59 +994,50 @@ impl AppState {
             self.filter_dialog_source_index = 0;
             return;
         }
-        
         let sources = self.available_sources.as_ref().unwrap();
         let input_lower = self.filter_dialog_source_input.to_lowercase();
-        
-        // Filter sources based on input - always show "Any Source"
         self.filter_dialog_filtered_sources = sources
             .iter()
             .enumerate()
-            .filter(|(idx, name)| {
-                // Always include "Any Source" or match the filter text
-                *idx == 0 || name.to_lowercase().contains(&input_lower)
+            .filter(|(_idx, name)| {
+                name.as_str() == "[Any Source]" || name.to_lowercase().contains(&input_lower)
             })
             .map(|(idx, name)| (idx, name.clone()))
             .collect();
-        
-        // If we have any matches, select the first one unless we already have a valid selection
         if !self.filter_dialog_filtered_sources.is_empty() {
-            let current_selection_idx = self.filter_dialog_source_index;
-            
-            // Check if current selection is still in filtered list
-            let selection_still_valid = self.filter_dialog_filtered_sources
+            let current_original_index = self.filter_dialog_source_index;
+            let current_selection_still_valid = self.filter_dialog_filtered_sources
                 .iter()
-                .any(|(idx, _)| *idx == current_selection_idx);
-                
-            if !selection_still_valid {
-                // Select first matching item
-                self.filter_dialog_source_index = self.filter_dialog_filtered_sources[0].0;
-                self.filter_dialog_filtered_source_selection = Some(0);
-            } else {
-                // Update the selection position in the filtered list
+                .any(|(idx, _)| *idx == current_original_index);
+            if current_selection_still_valid {
                 self.filter_dialog_filtered_source_selection = self.filter_dialog_filtered_sources
                     .iter()
-                    .position(|(idx, _)| *idx == self.filter_dialog_source_index);
+                    .position(|(idx, _)| *idx == current_original_index);
+            } else {
+                self.filter_dialog_source_index = self.filter_dialog_filtered_sources[0].0;
+                self.filter_dialog_filtered_source_selection = Some(0);
             }
         } else {
             self.filter_dialog_filtered_source_selection = None;
-            self.filter_dialog_source_index = 0;
+            self.filter_dialog_source_index = 0; 
         }
     }
 }
 
 #[cfg(target_os = "windows")]
 impl Drop for AppState {
+    /// Drops AppState and ensures that the Windows Event Log query handle is closed.
     fn drop(&mut self) {
         if let Some(handle) = self.query_handle.take() {
             unsafe {
                 let _ = EvtClose(handle);
             }
-            self.log("ERROR - Failed to close query handle."); // Log if closing fails
+            self.log("ERROR - Failed to close query handle.");
         }
     }
 }
 
+/// Sanitizes a filename by retaining only alphanumeric characters, dashes, underscores, and dots.
 fn sanitize_filename(filename: &str) -> String {
     filename
         .chars()
@@ -1007,6 +1045,7 @@ fn sanitize_filename(filename: &str) -> String {
         .collect()
 }
 
+/// Initializes the terminal in raw mode and enters the alternate screen.
 fn init_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -1014,25 +1053,26 @@ fn init_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     Terminal::new(CrosstermBackend::new(stdout))
 }
 
+/// Restores the terminal to its previous state and leaves the alternate screen.
 fn restore_terminal() -> io::Result<()> {
     disable_raw_mode()?;
     execute!(stdout(), LeaveAlternateScreen)?;
     Ok(())
 }
 
+/// Computes a centered fixed-size rectangle within a given rectangle.
 fn centered_fixed_rect(width: u16, height: u16, r: Rect) -> Rect {
     let x = r.x + r.width.saturating_sub(width) / 2;
     let y = r.y + r.height.saturating_sub(height) / 2;
     Rect::new(x, y, width.min(r.width), height.min(r.height))
 }
 
+/// Renders the entire UI, including the log list, event table, preview panel, dialogs, and help screen.
 fn ui(frame: &mut Frame, app_state: &mut AppState) {
-    let main_layout =
-        Layout::horizontal([Constraint::Max(30), Constraint::Min(0)]).split(frame.size());
+    let main_layout = Layout::horizontal([Constraint::Max(30), Constraint::Min(0)]).split(frame.size());
     let logs_area = main_layout[0];
     let right_pane_area = main_layout[1];
-    let right_layout =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(10)]).split(right_pane_area);
+    let right_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(10)]).split(right_pane_area);
     let events_area = right_layout[0];
     let preview_area = right_layout[1];
     let log_items: Vec<ListItem> = LOG_NAMES.iter().map(|&name| ListItem::new(name)).collect();
@@ -1050,20 +1090,10 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .title("Event Viewer (Local)")
         .title(log_list_help_title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs {
-            Color::Cyan
-        } else {
-            Color::White
-        }));
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs { Color::Cyan } else { Color::White }));
     let log_list = List::new(log_items)
         .block(log_list_block)
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(
-            if app_state.focus == PanelFocus::Logs {
-                Color::Blue
-            } else {
-                Color::DarkGray
-            },
-        ))
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(if app_state.focus == PanelFocus::Logs { Color::Blue } else { Color::DarkGray }))
         .highlight_symbol("> ");
     let mut log_list_state = ListState::default();
     log_list_state.select(Some(app_state.selected_log_index));
@@ -1086,11 +1116,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             ])
         })
         .collect();
-    let sort_indicator = if app_state.sort_descending {
-        " ↓"
-    } else {
-        " ↑"
-    };
+    let sort_indicator = if app_state.sort_descending { " ↓" } else { " ↑" };
     let datetime_header = format!("Date and Time{}", sort_indicator);
     let header_cells = [
         Cell::from("Level"),
@@ -1099,13 +1125,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         Cell::from("Event ID"),
     ]
     .into_iter()
-    .map(|cell| {
-        cell.style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-    });
+    .map(|cell| cell.style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
     let header = Row::new(header_cells)
         .style(Style::default().bg(Color::DarkGray))
         .height(1);
@@ -1122,25 +1142,15 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     };
     let event_table_help_line = Line::from(vec![
         Span::styled("[s]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(" sort | "),
+        Span::raw(" sort "),
         Span::styled("[l]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(format!(
-            " level({}) | ",
-            app_state.filter_level.display_name()
-        )),
+        Span::raw(format!(" level ({}) ", app_state.filter_level.display_name())),
         Span::styled("[f]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(format!(
-            " filter({}) | ",
-            if app_state.active_filter.is_some() {
-                "Active"
-            } else {
-                "Inactive"
-            }
-        )),
+        Span::raw(format!(" filter ({}) ", if app_state.active_filter.is_some() { "Active" } else { "Inactive" })),
         Span::styled("[/]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(" search | "),
+        Span::raw(" search "),
         Span::styled("[n]", next_prev_style),
-        Span::raw(" next | "),
+        Span::raw(" next "),
         Span::styled("[p]", next_prev_style),
         Span::raw(" prev"),
     ])
@@ -1152,13 +1162,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .title(format!("Events: {}", app_state.selected_log_name))
         .title(event_table_help_title)
         .borders(Borders::ALL)
-        .border_style(
-            Style::default().fg(if app_state.focus == PanelFocus::Events {
-                Color::Cyan
-            } else {
-                Color::White
-            }),
-        );
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Events { Color::Cyan } else { Color::White }));
     let event_table = Table::new(event_rows, widths)
         .header(header)
         .block(event_table_block)
@@ -1166,16 +1170,11 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .highlight_symbol(">> ")
         .column_spacing(1);
     frame.render_stateful_widget(event_table, events_area, &mut app_state.table_state);
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
     let preview_block = Block::default()
         .title("Event Message Preview")
         .borders(Borders::ALL)
-        .border_style(
-            Style::default().fg(if app_state.focus == PanelFocus::Preview {
-                Color::Cyan
-            } else {
-                Color::White
-            }),
-        );
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Preview { Color::Cyan } else { Color::White }));
     let preview_message = if let Some(selected_index) = app_state.table_state.selected() {
         app_state
             .events
@@ -1186,14 +1185,21 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     };
     let message_lines = preview_message.lines().count() as u16;
     let available_height = preview_area.height.saturating_sub(2);
-    app_state.preview_scroll = app_state
-        .preview_scroll
-        .min(message_lines.saturating_sub(available_height));
+    app_state.preview_scroll = app_state.preview_scroll.min(message_lines.saturating_sub(available_height));
     let preview_paragraph = Paragraph::new(preview_message)
         .block(preview_block)
         .wrap(Wrap { trim: true })
         .scroll((app_state.preview_scroll, 0));
     frame.render_widget(preview_paragraph, preview_area);
+    let version_string = format!("v{}", VERSION);
+    let version_width = version_string.len() as u16;
+    if preview_area.width > version_width + 2 && preview_area.height > 1 {
+        let version_x = preview_area.right() - version_width - 1;
+        let version_y = preview_area.bottom() - 1;
+        let version_rect = Rect::new(version_x, version_y, version_width, 1);
+        let version_paragraph = Paragraph::new(version_string).style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(version_paragraph, version_rect);
+    }
     if let Some(event_details) = &mut app_state.event_details_dialog {
         if event_details.visible {
             let dialog_width = 70.min(frame.size().width.saturating_sub(4));
@@ -1233,12 +1239,8 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             let visible_height = event_details.current_visible_height;
             let content = event_details.current_content();
             let content_lines: Vec<&str> = content.lines().collect();
-            let start_line = event_details
-                .scroll_position
-                .min(content_lines.len().saturating_sub(1));
-            let end_line = (start_line + visible_height)
-                .min(content_lines.len())
-                .max(start_line);
+            let start_line = event_details.scroll_position.min(content_lines.len().saturating_sub(1));
+            let end_line = (start_line + visible_height).min(content_lines.len()).max(start_line);
             let visible_content = if content_lines.is_empty() {
                 String::new()
             } else {
@@ -1256,15 +1258,12 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             if content_lines.len() > visible_height {
                 let scroll_info = format!("[{}/{}]", start_line + 1, content_lines.len());
                 let scroll_rect = Rect::new(
-                    content_area
-                        .right()
-                        .saturating_sub(scroll_info.len() as u16 + 1),
+                    content_area.right().saturating_sub(scroll_info.len() as u16 + 1),
                     content_area.y,
                     scroll_info.len() as u16,
                     1,
                 );
-                let scroll_indicator =
-                    Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
+                let scroll_indicator = Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
                 frame.render_widget(scroll_indicator, scroll_rect);
             }
         }
@@ -1327,9 +1326,16 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         frame.render_widget(search_paragraph, search_area);
     }
     if app_state.is_filter_dialog_visible {
-        let dialog_width = 50;
-        let dialog_height = 12;
-        let dialog_area = centered_fixed_rect(dialog_width, dialog_height, frame.size());
+        let dialog_width = 60;
+        let list_visible = app_state.filter_dialog_focus == FilterFieldFocus::Source && !app_state.filter_dialog_filtered_sources.is_empty();
+        let list_height = if list_visible {
+            5.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
+        } else {
+            1
+        };
+        let required_inner_height = 7 + list_height;
+        let dialog_height = required_inner_height + 2 + 2;
+        let dialog_area = centered_fixed_rect(dialog_width, dialog_height.min(frame.size().height), frame.size());
         frame.render_widget(Clear, dialog_area);
         let esc_hint_line = Line::from(vec![
             Span::styled("[Esc]", Style::new().bold().fg(Color::Gray)),
@@ -1346,23 +1352,32 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             .border_style(Style::default().fg(Color::Magenta));
         let inner_area = dialog_block.inner(dialog_area);
         frame.render_widget(dialog_block.clone(), dialog_area);
+        let source_area_height = 1 + 1 + list_height;
+        let constraints = vec![
+            Constraint::Length(source_area_height),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ];
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
+            .constraints(constraints)
+            .split(inner_area);
+        let source_chunks = Layout::default()
+            .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Length(1),
+                Constraint::Min(0),
             ])
-            .split(inner_area);
+            .split(chunks[0]);
         let focused_style = Style::default().bg(Color::DarkGray);
         let unfocused_style = Style::default();
-        frame.render_widget(Paragraph::new("Source:"), chunks[0]);
+        frame.render_widget(Paragraph::new("Source:"), source_chunks[0]);
         let source_style = if app_state.filter_dialog_focus == FilterFieldFocus::Source {
             focused_style
         } else {
@@ -1371,56 +1386,27 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         let source_input_display = if app_state.filter_dialog_focus == FilterFieldFocus::Source {
             format!("{}_", app_state.filter_dialog_source_input)
         } else if app_state.filter_dialog_source_input.is_empty() {
-            "[Type to filter sources]".to_string()
+            "[Any Source]".to_string() 
         } else {
             app_state.filter_dialog_source_input.clone()
         };
         frame.render_widget(
             Paragraph::new(source_input_display).style(source_style),
-            chunks[1],
+            source_chunks[1],
         );
-        let selected_source_name = app_state
-            .available_sources
-            .as_ref()
-            .and_then(|v| v.get(app_state.filter_dialog_source_index).cloned())
-            .unwrap_or_else(|| "[Source List Unavailable]".to_string());
-        let preview_text = if app_state.filter_dialog_focus == FilterFieldFocus::Source && 
-                              !app_state.filter_dialog_filtered_sources.is_empty() {
-            let mut preview = String::from("Matches: ");
-            let selected_pos = app_state.filter_dialog_filtered_source_selection.unwrap_or(0);
-            
-            // Get up to 3 items centered around the selected position
-            let start_idx = if selected_pos > 1 { selected_pos - 1 } else { 0 };
-            let end_idx = (start_idx + 3).min(app_state.filter_dialog_filtered_sources.len());
-            
-            for (i, (_, name)) in app_state.filter_dialog_filtered_sources[start_idx..end_idx].iter().enumerate() {
-                if i > 0 {
-                    preview.push_str(", ");
-                }
-                
-                if i + start_idx == selected_pos {
-                    preview.push_str(&format!("[{}]", name));
-                } else {
-                    preview.push_str(name);
-                }
-            }
-            
-            if app_state.filter_dialog_filtered_sources.len() > 3 {
-                preview.push_str(&format!(" (+{} more)", app_state.filter_dialog_filtered_sources.len() - 3));
-            }
-            
-            preview
-        } else {
-            format!("Selected: {}", selected_source_name)
-        };
-        
-        frame.render_widget(
-            Paragraph::new(preview_text)
-                .alignment(Alignment::Left)
-                .style(Style::default().fg(Color::DarkGray)),
-            chunks[2],
-        );
-        frame.render_widget(Paragraph::new("Event ID:"), chunks[3]);
+        if app_state.filter_dialog_focus == FilterFieldFocus::Source && !app_state.filter_dialog_filtered_sources.is_empty() {
+            let list_items: Vec<ListItem> = app_state.filter_dialog_filtered_sources
+                .iter()
+                .map(|(_, name)| ListItem::new(name.clone()))
+                .collect();
+            let list = List::new(list_items)
+                .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::Blue))
+                .highlight_symbol("> ");
+            let mut list_state = ListState::default();
+            list_state.select(app_state.filter_dialog_filtered_source_selection);
+            frame.render_stateful_widget(list, source_chunks[3], &mut list_state);
+        }
+        frame.render_widget(Paragraph::new("Event ID:"), chunks[1]);
         let event_id_input_style = if app_state.filter_dialog_focus == FilterFieldFocus::EventId {
             focused_style
         } else {
@@ -1433,7 +1419,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         };
         frame.render_widget(
             Paragraph::new(event_id_text).style(event_id_input_style),
-            chunks[4],
+            chunks[2],
         );
         let level_text = Line::from(vec![
             Span::raw("Level: "),
@@ -1448,7 +1434,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             ),
             Span::styled(" >", Style::default().fg(Color::Yellow)),
         ]);
-        frame.render_widget(Paragraph::new(level_text), chunks[5]);
+        frame.render_widget(Paragraph::new(level_text), chunks[3]);
         let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply {
             Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
         } else {
@@ -1461,11 +1447,11 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         };
         let apply_text = Span::styled(" [ Apply ] ", apply_style);
         let clear_text = Span::styled(" [ Clear ] ", clear_style);
-        frame.render_widget(Paragraph::new(""), chunks[6]);
+        frame.render_widget(Paragraph::new(""), chunks[4]);
         let button_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[7]);
+            .split(chunks[5]);
         frame.render_widget(
             Paragraph::new(apply_text).alignment(Alignment::Center),
             button_layout[0],
@@ -1475,9 +1461,162 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             button_layout[1],
         );
     }
+    if app_state.help_dialog_visible {
+        let help_width = 80.min(frame.size().width.saturating_sub(4));
+        let help_height = 30.min(frame.size().height.saturating_sub(4));
+        let help_area = centered_fixed_rect(help_width, help_height, frame.size());
+        frame.render_widget(Clear, help_area);
+        let dismiss_text = Line::from(vec![
+            Span::styled("[Esc]", Style::default().fg(Color::Gray).bold()),
+            Span::raw(" Dismiss "),
+            Span::styled(" ↑↓ PgUp/Dn Home/End ", Style::default().fg(Color::Gray).bold()),
+            Span::raw(" Scroll "),
+        ])
+        .alignment(Alignment::Center);
+        let dismiss_title = Title::from(dismiss_text)
+            .position(Position::Bottom)
+            .alignment(Alignment::Center);
+        let help_dialog_title = format!(" Help - Event Commander (v{}) ", VERSION);
+        let help_block = Block::default()
+            .title(help_dialog_title)
+            .title(dismiss_title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        let content_area = help_block.inner(help_area);
+        frame.render_widget(help_block, help_area);
+        let help_text = vec![
+            Line::from(Span::styled("Event Commander", Style::default().bold().fg(Color::Cyan))), 
+            Line::from("A simple TUI for browsing Windows Event Logs."),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("Developed by: "),
+                Span::styled("Toby Martin", Style::default().fg(Color::Green)),
+            ]),
+            Line::from(vec![
+                Span::raw("Source Code: "),
+                Span::styled("https://github.com/Dastari/event_commander", Style::default().fg(Color::Blue).add_modifier(Modifier::UNDERLINED)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled("License: GPL-3.0-or-later", Style::default().fg(Color::Magenta))),
+            Line::from("  This program is free software: you can redistribute it and/or modify"),
+            Line::from("  it under the terms of the GNU General Public License as published by"),
+            Line::from("  the Free Software Foundation, either version 3 of the License, or"),
+            Line::from("  (at your option) any later version. See LICENSE.txt for details."),
+            Line::from(""),
+            Line::from(Span::styled("--- Keybindings ---", Style::default().bold().fg(Color::Yellow))), 
+            Line::from(""),
+            Line::from(Span::styled("Global:", Style::default().underlined())), 
+            Line::from(vec![Span::styled("  q       ", Style::default().bold()), Span::raw("Quit application")]), 
+            Line::from(vec![Span::styled("  F1      ", Style::default().bold()), Span::raw("Show this help screen")]), 
+            Line::from(vec![Span::styled("  Tab     ", Style::default().bold()), Span::raw("Cycle focus forward (Logs -> Events -> Preview)")]), 
+            Line::from(vec![Span::styled("  S-Tab   ", Style::default().bold()), Span::raw("Cycle focus backward")]), 
+            Line::from(""),
+            Line::from(Span::styled("Log List Panel (Left):", Style::default().underlined())), 
+            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Navigate log types")]), 
+            Line::from(vec![Span::styled("  Enter   ", Style::default().bold()), Span::raw("Select log and move focus to Events")]), 
+            Line::from(""),
+            Line::from(Span::styled("Event Table Panel (Center):", Style::default().underlined())), 
+            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Scroll events line by line")]), 
+            Line::from(vec![Span::styled("  PgUp    ", Style::default().bold()), Span::raw("Scroll events up one page")]), 
+            Line::from(vec![Span::styled("  PgDn    ", Style::default().bold()), Span::raw("Scroll events down one page")]), 
+            Line::from(vec![Span::styled("  Home/g  ", Style::default().bold()), Span::raw("Go to the first event")]), 
+            Line::from(vec![Span::styled("  End/G   ", Style::default().bold()), Span::raw("Go to the last event (loads more if needed)")]), 
+            Line::from(vec![Span::styled("  Enter   ", Style::default().bold()), Span::raw("Show detailed view for selected event")]), 
+            Line::from(vec![Span::styled("  s       ", Style::default().bold()), Span::raw("Toggle sort order (Ascending/Descending)")]), 
+            Line::from(vec![Span::styled("  l       ", Style::default().bold()), Span::raw("Cycle through quick level filters (All -> Info -> Warn -> Err/Crit)")]), 
+            Line::from(vec![Span::styled("  f       ", Style::default().bold()), Span::raw("Open detailed filter dialog")]), 
+            Line::from(vec![Span::styled("  /       ", Style::default().bold()), Span::raw("Start search input")]), 
+            Line::from(vec![Span::styled("  n       ", Style::default().bold()), Span::raw("Find next search match (after search)")]), 
+            Line::from(vec![Span::styled("  p/N     ", Style::default().bold()), Span::raw("Find previous search match (after search)")]), 
+            Line::from(""),
+            Line::from(Span::styled("Event Preview Panel (Bottom Right):", Style::default().underlined())), 
+            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Scroll preview line by line")]), 
+            Line::from(vec![Span::styled("  PgUp    ", Style::default().bold()), Span::raw("Scroll preview up one page")]), 
+            Line::from(vec![Span::styled("  PgDn    ", Style::default().bold()), Span::raw("Scroll preview down one page")]), 
+            Line::from(vec![Span::styled("  Home/g  ", Style::default().bold()), Span::raw("Scroll preview to top")]), 
+            Line::from(""),
+            Line::from(Span::styled("Event Details Dialog:", Style::default().underlined())), 
+            Line::from(vec![Span::styled("  Esc     ", Style::default().bold()), Span::raw("Dismiss dialog")]), 
+            Line::from(vec![Span::styled("  v       ", Style::default().bold()), Span::raw("Toggle view (Formatted / Raw XML)")]), 
+            Line::from(vec![Span::styled("  s       ", Style::default().bold()), Span::raw("Save current event XML to disk")]), 
+            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Scroll content line by line")]), 
+            Line::from(vec![Span::styled("  PgUp    ", Style::default().bold()), Span::raw("Scroll content up one page")]), 
+            Line::from(vec![Span::styled("  PgDn    ", Style::default().bold()), Span::raw("Scroll content down one page")]), 
+            Line::from(vec![Span::styled("  Home/g  ", Style::default().bold()), Span::raw("Go to top of content")]), 
+            Line::from(vec![Span::styled("  End/G   ", Style::default().bold()), Span::raw("Go to bottom of content")]), 
+            Line::from(""),
+            Line::from(Span::styled("Filter Dialog:", Style::default().underlined())), 
+            Line::from(vec![Span::styled("  Esc     ", Style::default().bold()), Span::raw("Cancel filtering and close dialog")]), 
+            Line::from(vec![Span::styled("  Tab     ", Style::default().bold()), Span::raw("Cycle focus through fields/buttons")]), 
+            Line::from(vec![Span::styled("  S-Tab   ", Style::default().bold()), Span::raw("Cycle focus backward")]), 
+            Line::from(vec![Span::styled("  Enter   ", Style::default().bold()), Span::raw("Confirm source selection / Apply / Clear")]), 
+            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Navigate source list (when Source focused)")]), 
+            Line::from(vec![Span::styled("  ←/→     ", Style::default().bold()), Span::raw("Change Level selection (when Level focused)")]), 
+            Line::from(vec![Span::styled("  Chars   ", Style::default().bold()), Span::raw("Type in Source/EventID fields")]), 
+            Line::from(vec![Span::styled("  Bksp    ", Style::default().bold()), Span::raw("Delete character in Source/EventID fields")]),
+        ];
+        let total_lines = help_text.len();
+        let visible_height = content_area.height as usize;
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        app_state.help_scroll_position = app_state.help_scroll_position.min(max_scroll);
+        let current_scroll = app_state.help_scroll_position;
+        let help_paragraph = Paragraph::new(help_text)
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(Color::White))
+            .scroll((current_scroll as u16, 0));
+        frame.render_widget(help_paragraph, content_area);
+        if total_lines > visible_height {
+            let scroll_info = format!("[{}/{}]", current_scroll + 1, total_lines);
+            let scroll_rect = Rect::new(
+                content_area.right().saturating_sub(scroll_info.len() as u16 + 1),
+                content_area.y,
+                scroll_info.len() as u16,
+                1,
+            );
+            let scroll_indicator = Paragraph::new(scroll_info).style(Style::default().fg(Color::Yellow));
+            frame.render_widget(scroll_indicator, scroll_rect);
+        }
+    }
 }
 
+/// Processes a key press event, updates the application state, and returns a PostKeyPressAction.
 fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
+    if app_state.help_dialog_visible {
+        match key.code {
+            KeyCode::Esc => {
+                app_state.help_dialog_visible = false;
+                app_state.help_scroll_position = 0;
+            }
+            KeyCode::Up => {
+                app_state.help_scroll_position = app_state.help_scroll_position.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                app_state.help_scroll_position = app_state.help_scroll_position.saturating_add(1);
+            }
+            KeyCode::PageUp => {
+                app_state.help_scroll_position = app_state.help_scroll_position.saturating_sub(10);
+            }
+            KeyCode::PageDown => {
+                app_state.help_scroll_position = app_state.help_scroll_position.saturating_add(10);
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                app_state.help_scroll_position = 0;
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                app_state.help_scroll_position = usize::MAX;
+            }
+            _ => {}
+        }
+        return PostKeyPressAction::None;
+    }
+    match key.code {
+        KeyCode::Char('q') => return PostKeyPressAction::Quit,
+        KeyCode::F(1) => {
+            app_state.help_dialog_visible = true;
+            return PostKeyPressAction::None;
+        }
+        _ => {}
+    }
     if let Some(dialog) = &mut app_state.status_dialog {
         if dialog.visible {
             match key.code {
@@ -1492,8 +1631,6 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             return PostKeyPressAction::None;
         }
     }
-    
-    // Handle search input mode
     if app_state.is_searching {
         match key.code {
             KeyCode::Esc => {
@@ -1505,7 +1642,7 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                 if !app_state.search_term.is_empty() {
                     app_state.is_searching = false;
                     app_state.last_search_term = Some(app_state.search_term.clone());
-                    let result = app_state.find_next_match();
+                    let _result = app_state.find_next_match();
                     app_state.search_term.clear();
                     return PostKeyPressAction::None;
                 } else {
@@ -1527,10 +1664,8 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             }
         }
     }
-    
     let mut status_action = PostKeyPressAction::None;
     let mut key_handled = false;
-    
     if let Some(dialog) = &mut app_state.event_details_dialog {
         if dialog.visible {
             match key.code {
@@ -1640,10 +1775,17 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             KeyCode::Enter => match app_state.filter_dialog_focus {
                 FilterFieldFocus::Source => {
                     if let Some(selected_pos) = app_state.filter_dialog_filtered_source_selection {
-                        if let Some((idx, _)) = app_state.filter_dialog_filtered_sources.get(selected_pos) {
-                            app_state.filter_dialog_source_index = *idx;
+                        if let Some((_, name)) = app_state.filter_dialog_filtered_sources.get(selected_pos) {
+                            app_state.filter_dialog_source_input = name.clone();
+                            if let Some(original_sources) = &app_state.available_sources {
+                                if let Some(idx) = original_sources.iter().position(|s| s == name) {
+                                     app_state.filter_dialog_source_index = idx;
+                                }
+                            }
+                            app_state.update_filtered_sources(); 
                         }
                     }
+                    app_state.filter_dialog_focus = FilterFieldFocus::EventId;
                 }
                 FilterFieldFocus::EventId => {
                     app_state.filter_dialog_focus = FilterFieldFocus::Level;
@@ -1652,14 +1794,11 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                     app_state.filter_dialog_focus = FilterFieldFocus::Apply;
                 }
                 FilterFieldFocus::Apply => {
-                    let selected_source = if app_state.filter_dialog_source_index == 0 {
+                    let source_input_trimmed = app_state.filter_dialog_source_input.trim();
+                    let selected_source = if source_input_trimmed.is_empty() {
                         None
                     } else {
-                        app_state
-                            .available_sources
-                            .as_ref()
-                            .and_then(|sources| sources.get(app_state.filter_dialog_source_index))
-                            .cloned()
+                        Some(source_input_trimmed.to_string())
                     };
                     let criteria = FilterCriteria {
                         source: selected_source,
@@ -1691,8 +1830,6 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                 FilterFieldFocus::Source => {
                     app_state.filter_dialog_source_input.push(c);
                     app_state.update_filtered_sources();
-                    
-                    // If we have matches after filtering, select the first one
                     if !app_state.filter_dialog_filtered_sources.is_empty() {
                         if app_state.filter_dialog_filtered_source_selection.is_none() {
                             app_state.filter_dialog_filtered_source_selection = Some(0);
@@ -1711,8 +1848,6 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                 FilterFieldFocus::Source => {
                     app_state.filter_dialog_source_input.pop();
                     app_state.update_filtered_sources();
-                    
-                    // If we have matches after filtering, select the first one
                     if !app_state.filter_dialog_filtered_sources.is_empty() {
                         if app_state.filter_dialog_filtered_source_selection.is_none() {
                             app_state.filter_dialog_filtered_source_selection = Some(0);
@@ -1726,20 +1861,14 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                 _ => {}
             },
             KeyCode::Left => match app_state.filter_dialog_focus {
-                FilterFieldFocus::Source => {
-                    // Left key doesn't make sense for navigating a filtered list
-                    // Keeping for backward compatibility
-                }
+                FilterFieldFocus::Source => {},
                 FilterFieldFocus::Level => {
                     app_state.filter_dialog_level = app_state.filter_dialog_level.previous();
                 }
                 _ => {}
             },
             KeyCode::Right => match app_state.filter_dialog_focus {
-                FilterFieldFocus::Source => {
-                    // Right key doesn't make sense for navigating a filtered list
-                    // Keeping for backward compatibility
-                }
+                FilterFieldFocus::Source => {},
                 FilterFieldFocus::Level => {
                     app_state.filter_dialog_level = app_state.filter_dialog_level.next();
                 }
@@ -1747,14 +1876,12 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             },
             KeyCode::Up => match app_state.filter_dialog_focus {
                 FilterFieldFocus::Source => {
-                    // Navigate up in the filtered sources list
-                    if let Some(current_pos) = app_state.filter_dialog_filtered_source_selection {
-                        if current_pos > 0 {
-                            let new_pos = current_pos - 1;
-                            app_state.filter_dialog_filtered_source_selection = Some(new_pos);
-                            if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
-                                app_state.filter_dialog_source_index = idx;
-                            }
+                    if !app_state.filter_dialog_filtered_sources.is_empty() {
+                        let current_pos = app_state.filter_dialog_filtered_source_selection.unwrap_or(0);
+                        let new_pos = if current_pos > 0 { current_pos - 1 } else { app_state.filter_dialog_filtered_sources.len() - 1 };
+                        app_state.filter_dialog_filtered_source_selection = Some(new_pos);
+                        if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
+                            app_state.filter_dialog_source_index = idx;
                         }
                     }
                 }
@@ -1762,14 +1889,12 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             },
             KeyCode::Down => match app_state.filter_dialog_focus {
                 FilterFieldFocus::Source => {
-                    // Navigate down in the filtered sources list
-                    if let Some(current_pos) = app_state.filter_dialog_filtered_source_selection {
-                        if current_pos + 1 < app_state.filter_dialog_filtered_sources.len() {
-                            let new_pos = current_pos + 1;
-                            app_state.filter_dialog_filtered_source_selection = Some(new_pos);
-                            if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
-                                app_state.filter_dialog_source_index = idx;
-                            }
+                    if !app_state.filter_dialog_filtered_sources.is_empty() {
+                        let current_pos = app_state.filter_dialog_filtered_source_selection.unwrap_or(0);
+                        let new_pos = if current_pos + 1 < app_state.filter_dialog_filtered_sources.len() { current_pos + 1 } else { 0 };
+                        app_state.filter_dialog_filtered_source_selection = Some(new_pos);
+                        if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
+                            app_state.filter_dialog_source_index = idx;
                         }
                     }
                 }
@@ -1849,7 +1974,6 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
     }
     match app_state.focus {
         PanelFocus::Logs => match key.code {
-            KeyCode::Char('q') => return PostKeyPressAction::Quit,
             KeyCode::Up => {
                 app_state.previous_log();
                 return PostKeyPressAction::ReloadData;
@@ -1867,7 +1991,6 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             _ => {}
         },
         PanelFocus::Events => match key.code {
-            KeyCode::Char('q') => return PostKeyPressAction::Quit,
             KeyCode::Up => {
                 app_state.scroll_up();
             }
@@ -1923,7 +2046,6 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             _ => {}
         },
         PanelFocus::Preview => match key.code {
-            KeyCode::Char('q') => return PostKeyPressAction::Quit,
             KeyCode::Up => {
                 app_state.preview_scroll_up(1);
             }
@@ -1945,12 +2067,17 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             KeyCode::Tab => {
                 app_state.focus = PanelFocus::Logs;
             }
+            KeyCode::F(1) => {
+                app_state.help_dialog_visible = true;
+                return PostKeyPressAction::None;
+            }
             _ => {}
         },
     }
     PostKeyPressAction::None
 }
 
+/// Formats an XML string with indentation and returns the formatted XML or an error message.
 fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
     let mut reader = Reader::from_str(xml_str);
     reader.trim_text(true);
@@ -1994,6 +2121,7 @@ fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|e| format!("UTF-8 Conversion Error: {}", e))
 }
 
+/// Application entry point; initializes the terminal and application state, and processes events.
 fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = init_terminal()?;
     let mut app_state = AppState::new();
@@ -2039,19 +2167,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                 app_state.filter_dialog_source_index = 0;
                 if let Some(active) = &app_state.active_filter {
                     if let Some(ref source) = active.source {
+                        app_state.filter_dialog_source_input = source.clone();
                         if let Some(ref sources) = app_state.available_sources {
                             if let Some(idx) = sources.iter().position(|s| s == source) {
                                 app_state.filter_dialog_source_index = idx;
                             }
                         }
+                    } else {
+                         app_state.filter_dialog_source_input.clear();
                     }
                     app_state.filter_dialog_event_id = active.event_id.clone().unwrap_or_default();
                     app_state.filter_dialog_level = active.level;
                 } else {
+                    app_state.filter_dialog_source_input.clear();
                     app_state.filter_dialog_event_id.clear();
                     app_state.filter_dialog_level = EventLevelFilter::All;
                 }
-                app_state.filter_dialog_source_input.clear();
                 app_state.update_filtered_sources();
                 app_state.filter_dialog_focus = FilterFieldFocus::Source;
                 app_state.is_filter_dialog_visible = true;

@@ -1,7 +1,8 @@
 [package]
 name = "event_commander"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 ratatui = { version = "0.26.3", features = ["crossterm"] }
