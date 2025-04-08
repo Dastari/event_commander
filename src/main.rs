@@ -6,7 +6,7 @@ use crossterm::{
 };
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap},
 };
 use std::{
     error::Error,
@@ -77,16 +77,11 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
         source = source.trim_start_matches("Microsoft-Windows-").to_string();
     }
 
-    let id = if let Some(start) = xml.find("<EventID>") {
-        let sub = &xml[start + "<EventID>".len()..];
-        if let Some(end) = sub.find("</EventID>") {
-            sub[..end].trim().to_string()
-        } else {
-            "0".to_string()
-        }
-    } else {
-        "0".to_string()
-    };
+    // Extract EventID from within the System block to handle attributes
+    let id = extract_tag_content(xml, "System")
+        .and_then(|system_xml| extract_tag_content(system_xml, "EventID"))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "0".to_string());
 
     let level_raw = if let Some(start) = xml.find("<Level>") {
         let sub = &xml[start + "<Level>".len()..];
@@ -116,11 +111,24 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
         })
         .unwrap_or_else(|| "".to_string());
 
+    // Extract message based on event type or fallback
+    let message = if let Some(event_data_xml) = extract_tag_content(xml, "EventData") {
+        if source == "Windows Error Reporting" && id == "1001" {
+            format_wer_event_data(event_data_xml)
+        } else {
+            // Fallback: Format as key-value pairs
+            format_simple_xml_section(event_data_xml)
+        }
+    } else {
+        "<No EventData found>".to_string()
+    };
+
     DisplayEvent {
         level,
         datetime,
         source,
         id,
+        message, // Use the formatted message
         raw_data: xml.to_string(),
     }
 }
@@ -131,6 +139,7 @@ struct DisplayEvent {
     datetime: String,
     source: String,
     id: String,
+    message: String, // Add message field
     raw_data: String,
 }
 
@@ -194,10 +203,11 @@ impl EventDetailsDialog {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 enum PanelFocus {
     Logs,
     Events,
+    Preview,
 }
 
 struct AppState {
@@ -206,6 +216,7 @@ struct AppState {
     selected_log_name: String,
     events: Vec<DisplayEvent>,
     table_state: TableState,
+    preview_scroll: u16, // Scroll position for preview pane
     error_dialog: Option<ErrorDialog>,
     event_details_dialog: Option<EventDetailsDialog>,
     log_file: Option<std::fs::File>,
@@ -224,6 +235,7 @@ impl AppState {
             selected_log_name: "".to_string(),
             events: Vec::new(),
             table_state: TableState::default(),
+            preview_scroll: 0, // Initialize scroll
             error_dialog: None,
             event_details_dialog: None,
             log_file,
@@ -250,8 +262,37 @@ impl AppState {
         if let Some(selected) = self.table_state.selected() {
             if let Some(event) = self.events.get(selected) {
                 let title = format!("Event Details: {} ({})", event.source, event.id);
-                self.event_details_dialog = Some(EventDetailsDialog::new(&title, &event.raw_data));
-                self.log(&format!("Showing details for event ID {}", event.id));
+
+                // Attempt to parse and format the XML nicely
+                let mut formatted_content = String::new();
+                formatted_content.push_str(&format!(
+                    "Level:       {}
+DateTime:    {}
+Source:      {}
+Event ID:    {}\n",
+                    event.level, event.datetime, event.source, event.id
+                ));
+
+                if let Some(system_xml) = extract_tag_content(&event.raw_data, "System") {
+                    formatted_content.push_str("\n--- System ---\n");
+                    formatted_content.push_str(&format_simple_xml_section(system_xml));
+                    formatted_content.push('\n');
+                }
+
+                if let Some(event_data_xml) = extract_tag_content(&event.raw_data, "EventData") {
+                    formatted_content.push_str("\n--- Event Data ---\n");
+                    formatted_content.push_str(&format_simple_xml_section(event_data_xml));
+                    formatted_content.push('\n');
+                }
+
+                // Fallback or append remaining raw data if needed (optional)
+                // if formatted_content.len() < 100 { // Arbitrary threshold
+                //     formatted_content.push_str("\n--- Raw XML ---\n");
+                //     formatted_content.push_str(&event.raw_data);
+                // }
+
+                self.event_details_dialog = Some(EventDetailsDialog::new(&title, &formatted_content));
+                self.log(&format!("Showing formatted details for event ID {}", event.id));
             }
         }
     }
@@ -316,16 +357,14 @@ impl AppState {
 
         // Fetch next batch (common to initial and subsequent loads)
         if let Some(query_handle) = self.query_handle {
-            let initial_event_count = self.events.len();
+            let _initial_event_count = self.events.len();
             let mut new_events_fetched = 0;
             unsafe {
                 loop {
                     let mut events_buffer: Vec<EVT_HANDLE> = vec![EVT_HANDLE::default(); EVENT_BATCH_SIZE];
                     let mut fetched: u32 = 0;
-                    let next_result = unsafe {
-                        let events_slice: &mut [isize] = std::mem::transmute(events_buffer.as_mut_slice());
-                        EvtNext(query_handle, events_slice, 0, 0, &mut fetched)
-                    };
+                    let events_slice: &mut [isize] = std::mem::transmute(events_buffer.as_mut_slice());
+                    let next_result = EvtNext(query_handle, events_slice, 0, 0, &mut fetched);
 
                     if !next_result.is_ok() {
                         let error = GetLastError().0;
@@ -385,18 +424,17 @@ impl AppState {
     }
     fn scroll_down(&mut self) {
         if self.events.is_empty() {
-            self.table_state.select(None);
+            self.select_event(None);
             return;
         }
         let current_selection = self.table_state.selected().unwrap_or(0);
         let new_selection = if current_selection >= self.events.len().saturating_sub(1) {
-            current_selection // Stay at the bottom
+            current_selection
         } else {
             current_selection + 1
         };
-        self.table_state.select(Some(new_selection));
+        self.select_event(Some(new_selection));
 
-        // Trigger load if near the end (e.g., within 20 rows)
         let load_threshold = self.events.len().saturating_sub(20);
         if new_selection >= load_threshold {
             #[cfg(target_os = "windows")]
@@ -405,26 +443,25 @@ impl AppState {
     }
     fn scroll_up(&mut self) {
         if self.events.is_empty() {
-            self.table_state.select(None);
+            self.select_event(None);
             return;
         }
         let i = match self.table_state.selected() {
             Some(i) => i.saturating_sub(1),
             None => 0,
         };
-        self.table_state.select(Some(i));
+        self.select_event(Some(i));
     }
     fn page_down(&mut self) {
         if self.events.is_empty() {
-            self.table_state.select(None);
+            self.select_event(None);
             return;
         }
         let page_size = 10;
         let current_selection = self.table_state.selected().unwrap_or(0);
         let new_selection = (current_selection + page_size).min(self.events.len().saturating_sub(1));
-        self.table_state.select(Some(new_selection));
+        self.select_event(Some(new_selection));
 
-        // Trigger load if near the end
         let load_threshold = self.events.len().saturating_sub(20);
         if new_selection >= load_threshold {
             #[cfg(target_os = "windows")]
@@ -433,7 +470,7 @@ impl AppState {
     }
     fn page_up(&mut self) {
         if self.events.is_empty() {
-            self.table_state.select(None);
+            self.select_event(None);
             return;
         }
         let page_size = 10;
@@ -441,13 +478,33 @@ impl AppState {
             Some(i) => i.saturating_sub(page_size),
             None => 0,
         };
-        self.table_state.select(Some(i));
+        self.select_event(Some(i));
     }
     fn switch_focus(&mut self) {
         self.focus = match self.focus {
             PanelFocus::Logs => PanelFocus::Events,
-            PanelFocus::Events => PanelFocus::Logs,
+            PanelFocus::Events => PanelFocus::Preview,
+            PanelFocus::Preview => PanelFocus::Logs,
         };
+    }
+
+    // Add scroll methods for preview
+    fn preview_scroll_down(&mut self) {
+        self.preview_scroll = self.preview_scroll.saturating_add(1);
+    }
+
+    fn preview_scroll_up(&mut self) {
+        self.preview_scroll = self.preview_scroll.saturating_sub(1);
+    }
+
+    fn reset_preview_scroll(&mut self) {
+        self.preview_scroll = 0;
+    }
+
+    // Reset preview scroll when table selection changes
+    fn select_event(&mut self, index: Option<usize>) {
+        self.table_state.select(index);
+        self.reset_preview_scroll();
     }
 }
 
@@ -462,6 +519,145 @@ impl Drop for AppState {
             self.log("Closed active event query handle.");
         }
     }
+}
+
+// Helper to extract text between two tags (robust, handles attributes, checks bounds)
+fn extract_tag_content<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
+    let start_tag_prefix = format!("<{}", tag);
+    let end_tag = format!("</{}>", tag);
+
+    if let Some(start_prefix_pos) = xml.find(&start_tag_prefix) {
+        // Define the start for searching for the closing '>' of the start tag
+        let search_start_for_gt = start_prefix_pos + start_tag_prefix.len();
+
+        // Ensure the search start position is valid before slicing/searching
+        if search_start_for_gt <= xml.len() {
+            // Find the closing '>' relative to search_start_for_gt
+            if let Some(start_tag_end_pos_rel) = xml[search_start_for_gt..].find('>') {
+                let content_start_abs = search_start_for_gt + start_tag_end_pos_rel + 1;
+
+                // Ensure content_start_abs is valid before slicing/searching
+                if content_start_abs <= xml.len() {
+                    // Find the closing tag relative to content_start_abs
+                    if let Some(end_tag_pos_rel) = xml[content_start_abs..].find(&end_tag) {
+                        let content_end_abs = content_start_abs + end_tag_pos_rel;
+
+                        // Final bound check before slicing
+                        if content_start_abs <= content_end_abs && content_end_abs <= xml.len() {
+                            return Some(xml[content_start_abs..content_end_abs].trim());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None // Return None if any step fails or indices are invalid
+}
+
+// Helper to format simple key-value pairs from XML sections
+fn format_simple_xml_section(xml_section: &str) -> String {
+    xml_section.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('<') && trimmed.ends_with('>') {
+                if let Some(tag_end) = trimmed.find('>') {
+                    let tag_part = &trimmed[1..tag_end];
+                    if let Some(content_start) = tag_end.checked_add(1) {
+                       if let Some(content_end) = trimmed.rfind("<") {
+                            let content = &trimmed[content_start..content_end];
+                            // Handle self-closing tags or attributes
+                            if let Some(attr_start) = tag_part.find(' ') {
+                                let tag_name = &tag_part[..attr_start];
+                                let attributes = &tag_part[attr_start..].trim();
+                                if content.is_empty() && trimmed.ends_with("/>") {
+                                    Some(format!("  {}: <{}>", tag_name, attributes))
+                                } else {
+                                    Some(format!("  {}: {} <{}>", tag_name, content, attributes))
+                                }
+                            } else {
+                                Some(format!("  {}: {}", tag_part, content))
+                            }
+                        } else { None }
+                    } else { None }
+                } else { None }
+            } else { None }
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+// Helper to extract attribute value from a tag string
+fn extract_attribute_from_tag(tag_str: &str, attr_name: &str) -> Option<String> {
+    let attr_prefix_s = format!(" {}='", attr_name);
+    let attr_prefix_d = format!(" {}=\"", attr_name);
+    if let Some(start) = tag_str.find(&attr_prefix_s) {
+        let sub = &tag_str[start + attr_prefix_s.len()..];
+        if let Some(end) = sub.find('\'') {
+            return Some(sub[..end].to_string());
+        }
+    } else if let Some(start) = tag_str.find(&attr_prefix_d) {
+        let sub = &tag_str[start + attr_prefix_d.len()..];
+        if let Some(end) = sub.find('"') {
+            return Some(sub[..end].to_string());
+        }
+    }
+    None
+}
+
+// Specific formatter for Windows Error Reporting Event ID 1001
+fn format_wer_event_data(event_data_xml: &str) -> String {
+    use std::collections::HashMap;
+    let mut data_map = HashMap::new();
+
+    // Extract Name and content from each <Data> tag
+    for line in event_data_xml.lines() {
+        if let Some(data_content) = extract_tag_content(line, "Data") {
+            if let Some(name) = extract_attribute_from_tag(line, "Name") {
+                 data_map.insert(name, data_content.to_string());
+            }
+        }
+    }
+
+    // Build the formatted string based on WER structure
+    let mut result = String::new();
+    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType")) {
+        result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
+    }
+    if let Some(event_name) = data_map.get("EventName") { result.push_str(&format!("Event Name: {}\n", event_name)); }
+    if let Some(response) = data_map.get("Response") { result.push_str(&format!("Response: {}\n", response)); }
+    if let Some(cab_id) = data_map.get("CabId") { result.push_str(&format!("Cab Id: {}\n", cab_id)); }
+
+    result.push_str("\nProblem signature:\n");
+    for i in 1..=10 {
+        let p_key = format!("P{}", i);
+        if let Some(val) = data_map.get(&p_key) {
+            result.push_str(&format!("P{}: {}\n", i, val));
+        }
+    }
+
+    if let Some(attached_files) = data_map.get("AttachedFiles") {
+        result.push_str("\nAttached files:\n");
+        // Split potentially multi-line attached files string
+        for file in attached_files.lines() {
+            result.push_str(file.trim());
+            result.push('\n');
+        }
+    }
+
+     if let Some(store_path) = data_map.get("StorePath") {
+        result.push_str("\nThese files may be available here:\n");
+        result.push_str(store_path.trim());
+        result.push('\n');
+    }
+
+    if let Some(analysis_symbol) = data_map.get("AnalysisSymbol") { result.push_str(&format!("\nAnalysis symbol: {}\n", analysis_symbol)); }
+    if let Some(rechecking) = data_map.get("Rechecking") { result.push_str(&format!("Rechecking for solution: {}\n", rechecking)); }
+    if let Some(report_id) = data_map.get("ReportId") { result.push_str(&format!("Report Id: {}\n", report_id)); }
+    if let Some(report_status) = data_map.get("ReportStatus") { result.push_str(&format!("Report Status: {}\n", report_status)); }
+    if let Some(hashed_bucket) = data_map.get("HashedBucket") { result.push_str(&format!("Hashed bucket: {}\n", hashed_bucket)); }
+    if let Some(cab_guid) = data_map.get("CabGuid") { result.push_str(&format!("Cab Guid: {}\n", cab_guid)); }
+
+    result.trim_end().to_string()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -511,6 +707,20 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let mut log_list_state = ListState::default();
     log_list_state.select(Some(app_state.selected_log_index));
     frame.render_stateful_widget(log_list, main_layout[0], &mut log_list_state);
+
+    // Split the right area vertically
+    let right_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),      // Event table
+            Constraint::Length(8), // Preview pane
+        ])
+        .split(main_layout[1]);
+
+    let events_area = right_layout[0];
+    let preview_area = right_layout[1];
+
+    // --- Render Event Table (in events_area) ---
     let event_rows: Vec<Row> = app_state.events.iter().map(|event| {
         let level_style = match event.level.as_str() {
             "Warning" => Style::default().fg(Color::Yellow),
@@ -545,7 +755,30 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol(">> ")
         .column_spacing(1);
-    frame.render_stateful_widget(event_table, main_layout[1], &mut app_state.table_state);
+    frame.render_stateful_widget(event_table, events_area, &mut app_state.table_state);
+
+    // --- Render Preview Pane (in preview_area) ---
+    let preview_block = Block::default()
+        .title("Event Message Preview")
+        .borders(Borders::ALL)
+        // Highlight border if preview pane is focused
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Preview { Color::Cyan } else { Color::White }));
+
+    let preview_message = if let Some(selected_index) = app_state.table_state.selected() {
+        app_state.events.get(selected_index)
+            .map_or("<Message not available>".to_string(), |event| event.message.clone())
+    } else {
+        "<No event selected>".to_string()
+    };
+
+    let preview_paragraph = Paragraph::new(preview_message)
+        .block(preview_block)
+        .wrap(Wrap { trim: true })
+        // Apply scroll offset
+        .scroll((app_state.preview_scroll, 0));
+
+    frame.render_widget(preview_paragraph, preview_area);
+
     if let Some(event_details) = &mut app_state.event_details_dialog {
         if event_details.visible {
             let dialog_width = 70.min(frame.size().width.saturating_sub(4));
@@ -635,13 +868,13 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
             KeyCode::Up => app_state.previous_log(),
             KeyCode::Down => app_state.next_log(),
             KeyCode::Right | KeyCode::Tab => {
-                // Trigger initial load when switching focus to Events
                 #[cfg(target_os = "windows")]
-                app_state.start_or_continue_log_load(true);
+                if app_state.query_handle.is_none() {
+                    app_state.start_or_continue_log_load(true);
+                }
                 app_state.switch_focus();
             }
             KeyCode::Enter => {
-                // Trigger initial load when selecting a log
                 #[cfg(target_os = "windows")]
                 app_state.start_or_continue_log_load(true);
                 app_state.switch_focus();
@@ -651,11 +884,21 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
         PanelFocus::Events => match key.code {
             KeyCode::Char('q') => return,
             KeyCode::Up => app_state.scroll_up(),
-            KeyCode::Down => app_state.scroll_down(), // Will now potentially trigger load
+            KeyCode::Down => app_state.scroll_down(),
             KeyCode::PageUp => app_state.page_up(),
-            KeyCode::PageDown => app_state.page_down(), // Will now potentially trigger load
+            KeyCode::PageDown => app_state.page_down(),
             KeyCode::Enter => app_state.show_event_details(),
-            KeyCode::Left | KeyCode::BackTab | KeyCode::Tab => app_state.switch_focus(),
+            KeyCode::Left | KeyCode::BackTab => app_state.switch_focus(),
+            KeyCode::Tab => app_state.switch_focus(),
+            _ => {}
+        },
+        PanelFocus::Preview => match key.code {
+            KeyCode::Char('q') => return,
+            KeyCode::Up => app_state.preview_scroll_up(),
+            KeyCode::Down => app_state.preview_scroll_down(),
+            KeyCode::Left => app_state.switch_focus(),
+            KeyCode::Tab => app_state.switch_focus(),
+            KeyCode::BackTab => app_state.switch_focus(),
             _ => {}
         },
     }
