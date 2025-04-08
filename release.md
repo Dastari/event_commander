@@ -26,6 +26,4 @@ This release introduces a user help screen and significantly enhances the event 
 *   Improved keybinding alignment in the `F1` Help Screen for better readability.
 
 ### Assets
-
-*(Optional: If you attach the compiled executable)*
-*   `event_commander-v1.0.2-windows.zip`: Compiled executable for Windows. 
+*   `event_commander.exe`: Compiled executable for Windows. 
