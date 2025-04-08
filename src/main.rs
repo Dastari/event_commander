@@ -19,12 +19,20 @@ use std::{
     collections::HashMap,
     error::Error,
     fs,
-    io::Cursor,
-    io::{self, Stdout, stdout},
+    io::{self, Cursor, Stdout, stdout},
     time::Duration,
     vec,
 };
-use windows::Win32::System::EventLog::{EVT_HANDLE, EvtRender, EvtRenderEventXml};
+
+#[cfg(target_os = "windows")]
+use windows::{
+    Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError},
+    Win32::System::EventLog::{
+        EVT_HANDLE, EvtClose, EvtNext, EvtNextPublisherId, EvtOpenPublisherEnum, EvtQuery,
+        EvtQueryChannelPath, EvtQueryReverseDirection, EvtRender, EvtRenderEventXml,
+    },
+    core::PCWSTR,
+};
 
 const EVENT_XML_NS: &str = "http://schemas.microsoft.com/win/2004/08/events/event";
 const EVENT_BATCH_SIZE: usize = 100;
@@ -36,14 +44,16 @@ const LOG_NAMES: [&str; 5] = [
     "ForwardedEvents",
 ];
 
+#[cfg(target_os = "windows")]
 fn to_wide_string(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
+#[cfg(target_os = "windows")]
 fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
     unsafe {
-        let mut buffer_used: u32 = 0;
-        let mut property_count: u32 = 0;
+        let mut buffer_used = 0;
+        let mut property_count = 0;
         let _ = EvtRender(
             None,
             event_handle,
@@ -97,8 +107,9 @@ fn get_attr(element: &Element, attr_name: &str) -> Option<String> {
     element.attr(attr_name).map(str::to_string)
 }
 
+#[cfg(target_os = "windows")]
 fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
-    let mut data_map: HashMap<String, String> = HashMap::new();
+    let mut data_map = HashMap::new();
     for data_el in event_data_element
         .children()
         .filter(|c| c.is("Data", EVENT_XML_NS))
@@ -178,12 +189,13 @@ fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
         .join("\n")
 }
 
+#[cfg(target_os = "windows")]
 fn parse_event_xml(xml: &str) -> DisplayEvent {
     let root: Result<Element, _> = xml.parse();
     let mut source = "<Parse Error>".to_string();
     let mut id = "0".to_string();
     let mut level = "Unknown".to_string();
-    let mut datetime = "".to_string();
+    let mut datetime = String::new();
     let mut message = "<Parse Error>".to_string();
     if let Ok(root) = root {
         if let Some(system) = root.get_child("System", EVENT_XML_NS) {
@@ -341,8 +353,7 @@ impl EventDetailsDialog {
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
     fn scroll_down(&mut self, visible_height: usize) {
-        let content = self.current_content();
-        let content_lines = content.trim_end().lines().count();
+        let content_lines = self.current_content().trim_end().lines().count();
         let max_scroll = content_lines.saturating_sub(visible_height.max(1));
         if self.scroll_position < max_scroll {
             self.scroll_position += 1;
@@ -352,8 +363,7 @@ impl EventDetailsDialog {
         self.scroll_position = self.scroll_position.saturating_sub(10);
     }
     fn page_down(&mut self, visible_height: usize) {
-        let content = self.current_content();
-        let content_lines = content.trim_end().lines().count();
+        let content_lines = self.current_content().trim_end().lines().count();
         let max_scroll = content_lines.saturating_sub(visible_height.max(1));
         self.scroll_position = self.scroll_position.saturating_add(10).min(max_scroll);
     }
@@ -361,14 +371,14 @@ impl EventDetailsDialog {
         self.scroll_position = 0;
     }
     fn go_to_bottom(&mut self, visible_height: usize) {
-        let content = self.current_content();
-        let content_lines = content.trim_end().lines().count();
+        let content_lines = self.current_content().trim_end().lines().count();
         self.scroll_position = content_lines.saturating_sub(visible_height.max(1));
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum EventLevelFilter {
+    #[default]
     All,
     Information,
     Warning,
@@ -382,6 +392,14 @@ impl EventLevelFilter {
             Self::Information => Self::Warning,
             Self::Warning => Self::Error,
             Self::Error => Self::All,
+        }
+    }
+    fn previous(&self) -> Self {
+        match self {
+            Self::All => Self::Error,
+            Self::Information => Self::All,
+            Self::Warning => Self::Information,
+            Self::Error => Self::Warning,
         }
     }
     fn display_name(&self) -> &str {
@@ -409,6 +427,30 @@ enum PanelFocus {
     Preview,
 }
 
+#[derive(Debug, Clone, Default)]
+struct FilterCriteria {
+    source: Option<String>,
+    event_id: Option<String>,
+    level: EventLevelFilter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FilterFieldFocus {
+    Source,
+    EventId,
+    Level,
+    Apply,
+    Clear,
+}
+
+enum PostKeyPressAction {
+    None,
+    ReloadData,
+    ShowConfirmation(String, String),
+    OpenFilterDialog,
+    Quit,
+}
+
 struct AppState {
     focus: PanelFocus,
     selected_log_index: usize,
@@ -425,6 +467,86 @@ struct AppState {
     no_more_events: bool,
     sort_descending: bool,
     filter_level: EventLevelFilter,
+    active_filter: Option<FilterCriteria>,
+    is_searching: bool,
+    search_term: String,
+    last_search_term: Option<String>,
+    is_filter_dialog_visible: bool,
+    filter_dialog_focus: FilterFieldFocus,
+    filter_dialog_source_index: usize,
+    filter_dialog_event_id: String,
+    filter_dialog_level: EventLevelFilter,
+    available_sources: Option<Vec<String>>,
+    filter_dialog_source_input: String,
+    filter_dialog_filtered_sources: Vec<(usize, String)>,
+    filter_dialog_filtered_source_selection: Option<usize>,
+}
+
+#[cfg(target_os = "windows")]
+fn load_available_sources(app: &mut AppState) -> Option<Vec<String>> {
+    let mut sources = Vec::new();
+    let publisher_enum_handle = match unsafe { EvtOpenPublisherEnum(None, 0) } {
+        Ok(handle) if !handle.is_invalid() => handle,
+        Ok(_handle) => return None,
+        Err(_e) => {
+            app.log(&format!(
+                "Error calling EvtOpenPublisherEnum: {} GetLastError: {:?}",
+                _e,
+                unsafe { GetLastError() }
+            ));
+            return None;
+        }
+    };
+    let mut buffer: Vec<u16> = Vec::new();
+    let mut buffer_size_needed = 0;
+    loop {
+        let get_size_result =
+            unsafe { EvtNextPublisherId(publisher_enum_handle, None, &mut buffer_size_needed) };
+        match get_size_result {
+            Err(e) if e.code() == ERROR_NO_MORE_ITEMS.into() => break,
+            Err(e) if e.code() == ERROR_INSUFFICIENT_BUFFER.into() => {
+                if buffer_size_needed == 0 {
+                    break;
+                }
+                buffer.resize(buffer_size_needed as usize, 0);
+                match unsafe {
+                    EvtNextPublisherId(
+                        publisher_enum_handle,
+                        Some(buffer.as_mut_slice()),
+                        &mut buffer_size_needed,
+                    )
+                } {
+                    Ok(_) => {
+                        if buffer_size_needed > 0 && (buffer_size_needed as usize) <= buffer.len() {
+                            let null_pos = buffer[..buffer_size_needed as usize]
+                                .iter()
+                                .position(|&c| c == 0)
+                                .unwrap_or(buffer_size_needed as usize);
+                            if null_pos <= buffer_size_needed as usize {
+                                let publisher_id = String::from_utf16_lossy(&buffer[..null_pos]);
+                                if !publisher_id.is_empty() {
+                                    sources.push(publisher_id);
+                                }
+                            }
+                        }
+                    }
+                    Err(_e) => break,
+                }
+            }
+            Err(_) => break,
+            Ok(_) => break,
+        }
+    }
+    unsafe {
+        let _ = EvtClose(publisher_enum_handle);
+    }
+    if sources.is_empty() {
+        None
+    } else {
+        sources.insert(0, "[Any Source]".to_string());
+        sources.sort_unstable_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        Some(sources)
+    }
 }
 
 impl AppState {
@@ -435,7 +557,7 @@ impl AppState {
             .append(true)
             .open("event_commander.log")
             .ok();
-        Self {
+        let state = Self {
             focus: PanelFocus::Logs,
             selected_log_index: 0,
             selected_log_name: String::new(),
@@ -451,15 +573,35 @@ impl AppState {
             no_more_events: false,
             sort_descending: true,
             filter_level: EventLevelFilter::All,
-        }
+            active_filter: None,
+            is_searching: false,
+            search_term: String::new(),
+            last_search_term: None,
+            is_filter_dialog_visible: false,
+            filter_dialog_focus: FilterFieldFocus::Source,
+            filter_dialog_source_index: 0,
+            filter_dialog_event_id: String::new(),
+            filter_dialog_level: EventLevelFilter::All,
+            available_sources: None,
+            filter_dialog_source_input: String::new(),
+            filter_dialog_filtered_sources: Vec::new(),
+            filter_dialog_filtered_source_selection: None,
+        };
+        state
     }
     fn log(&mut self, message: &str) {
         if let Some(file) = &mut self.log_file {
-            use std::io::Write;
-            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-            let log_entry = format!("[{}] {}\n", timestamp, message);
-            let _ = file.write_all(log_entry.as_bytes());
-            let _ = file.flush();
+            // Only log messages indicating errors from Event Log API calls.
+            if message.contains("Error")
+                || message.contains("Failed")
+                || message.contains("GetLastError")
+            {
+                use std::io::Write;
+                let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+                let log_entry = format!("[{}] {}\n", timestamp, message);
+                let _ = file.write_all(log_entry.as_bytes());
+                let _ = file.flush();
+            }
         }
     }
     fn show_error(&mut self, title: &str, message: &str) {
@@ -468,7 +610,6 @@ impl AppState {
     }
     fn show_confirmation(&mut self, title: &str, message: &str) {
         self.status_dialog = Some(StatusDialog::new(title, message, false));
-        self.log(&format!("INFO - {}: {}", title, message));
     }
     fn show_event_details(&mut self) {
         if let Some(selected) = self.table_state.selected() {
@@ -490,26 +631,16 @@ impl AppState {
                     &event.datetime,
                     &event.source,
                 ));
-                self.log(&format!("Showing details for event ID {}", event.id));
             }
         }
     }
     #[cfg(target_os = "windows")]
     fn start_or_continue_log_load(&mut self, initial_load: bool) {
-        if self.is_loading {
-            self.log("Load requested but already in progress.");
-            return;
-        }
-        if !initial_load && self.no_more_events {
-            self.log("Load requested but no more events to fetch.");
+        if self.is_loading || (!initial_load && self.no_more_events) {
             return;
         }
         self.is_loading = true;
         if initial_load {
-            self.log(&format!(
-                "Starting initial load for log: {}",
-                self.selected_log_name
-            ));
             self.events.clear();
             self.table_state = TableState::default();
             self.no_more_events = false;
@@ -517,7 +648,6 @@ impl AppState {
                 unsafe {
                     let _ = EvtClose(handle);
                 }
-                self.log("Closed previous query handle.");
             }
             self.selected_log_name = LOG_NAMES
                 .get(self.selected_log_index)
@@ -529,9 +659,8 @@ impl AppState {
                 return;
             }
             let channel_wide = to_wide_string(&self.selected_log_name);
-            let query_str = self.filter_level.to_xpath_query();
+            let query_str = self.build_xpath_from_filter();
             let query_str_wide = to_wide_string(&query_str);
-            self.log(&format!("Using query: {}", query_str));
             let flags = if self.sort_descending {
                 EvtQueryChannelPath.0 | EvtQueryReverseDirection.0
             } else {
@@ -544,13 +673,7 @@ impl AppState {
                     PCWSTR::from_raw(query_str_wide.as_ptr()),
                     flags,
                 ) {
-                    Ok(handle) => {
-                        self.query_handle = Some(handle);
-                        self.log(&format!(
-                            "Created new event query handle (Sort Desc: {}).",
-                            self.sort_descending
-                        ));
-                    }
+                    Ok(handle) => self.query_handle = Some(handle),
                     Err(e) => {
                         self.show_error(
                             "Query Error",
@@ -561,11 +684,6 @@ impl AppState {
                     }
                 }
             }
-        } else {
-            self.log(&format!(
-                "Continuing log load... (Sort Desc: {}).",
-                self.sort_descending
-            ));
         }
         if let Some(query_handle) = self.query_handle {
             let mut new_events_fetched = 0;
@@ -573,14 +691,13 @@ impl AppState {
                 loop {
                     let mut events_buffer: Vec<EVT_HANDLE> =
                         vec![EVT_HANDLE::default(); EVENT_BATCH_SIZE];
-                    let mut fetched: u32 = 0;
+                    let mut fetched = 0;
                     let events_slice: &mut [isize] =
                         std::mem::transmute(events_buffer.as_mut_slice());
                     let next_result = EvtNext(query_handle, events_slice, 0, 0, &mut fetched);
                     if !next_result.is_ok() {
                         let error = GetLastError().0;
                         if error == ERROR_NO_MORE_ITEMS.0 {
-                            self.log("Reached end of event log.");
                             self.no_more_events = true;
                         } else {
                             self.show_error(
@@ -594,7 +711,6 @@ impl AppState {
                         break;
                     }
                     if fetched == 0 {
-                        self.log("EvtNext returned 0 events, assuming end.");
                         self.no_more_events = true;
                         break;
                     }
@@ -609,21 +725,9 @@ impl AppState {
                     break;
                 }
             }
-            if new_events_fetched > 0 {
-                self.log(&format!(
-                    "Fetched {} new events (total {}).",
-                    new_events_fetched,
-                    self.events.len()
-                ));
-                if initial_load && !self.events.is_empty() {
-                    self.table_state.select(Some(0));
-                }
-            } else if initial_load {
-                self.table_state.select(None);
-                self.log(&format!("No events found in {}", self.selected_log_name));
+            if new_events_fetched > 0 && initial_load && !self.events.is_empty() {
+                self.table_state.select(Some(0));
             }
-        } else {
-            self.log("Attempted to load more events, but no query handle exists.");
         }
         self.is_loading = false;
     }
@@ -631,9 +735,13 @@ impl AppState {
         if self.selected_log_index < LOG_NAMES.len() - 1 {
             self.selected_log_index += 1;
         }
+        // Always clear the filter when switching logs
+        self.active_filter = None;
     }
     fn previous_log(&mut self) {
         self.selected_log_index = self.selected_log_index.saturating_sub(1);
+        // Always clear the filter when switching logs
+        self.active_filter = None;
     }
     fn scroll_down(&mut self) {
         if self.events.is_empty() {
@@ -643,8 +751,7 @@ impl AppState {
         let current_selection = self.table_state.selected().unwrap_or(0);
         let new_selection = (current_selection + 1).min(self.events.len().saturating_sub(1));
         self.select_event(Some(new_selection));
-        let load_threshold = self.events.len().saturating_sub(20);
-        if new_selection >= load_threshold {
+        if new_selection >= self.events.len().saturating_sub(20) {
             #[cfg(target_os = "windows")]
             self.start_or_continue_log_load(false);
         }
@@ -667,8 +774,7 @@ impl AppState {
         let new_selection =
             (current_selection + page_size).min(self.events.len().saturating_sub(1));
         self.select_event(Some(new_selection));
-        let load_threshold = self.events.len().saturating_sub(20);
-        if new_selection >= load_threshold {
+        if new_selection >= self.events.len().saturating_sub(20) {
             #[cfg(target_os = "windows")]
             self.start_or_continue_log_load(false);
         }
@@ -722,6 +828,164 @@ impl AppState {
         self.table_state.select(index);
         self.reset_preview_scroll();
     }
+    fn event_matches_search(&self, event: &DisplayEvent, term_lower: &str) -> bool {
+        event.level.to_lowercase().contains(term_lower)
+            || event.datetime.to_lowercase().contains(term_lower)
+            || event.source.to_lowercase().contains(term_lower)
+            || event.id.to_lowercase().contains(term_lower)
+            || event.message.to_lowercase().contains(term_lower)
+    }
+    fn find_next_match(&mut self) -> bool {
+        if self.events.is_empty() {
+            self.show_confirmation("Search", "No events to search.");
+            return false;
+        }
+        let term = if let Some(t) = self.last_search_term.clone() {
+            t
+        } else {
+            self.show_error("Search Error", "No active search term.");
+            return false;
+        };
+        if term.is_empty() {
+            self.show_error("Search Error", "Search term cannot be empty.");
+            return false;
+        }
+        let term_lower = term.to_lowercase();
+        let start_index = self.table_state.selected().map_or(0, |i| i + 1);
+        for i in start_index..self.events.len() {
+            if self.event_matches_search(&self.events[i], &term_lower) {
+                self.select_event(Some(i));
+                return true;
+            }
+        }
+        for i in 0..start_index {
+            if self.event_matches_search(&self.events[i], &term_lower) {
+                self.select_event(Some(i));
+                return true;
+            }
+        }
+        self.show_confirmation("Search", "No further matches found (searched from top).");
+        false
+    }
+    fn find_previous_match(&mut self) -> bool {
+        if self.events.is_empty() {
+            self.show_confirmation("Search", "No events to search.");
+            return false;
+        }
+        let term = if let Some(t) = self.last_search_term.clone() {
+            t
+        } else {
+            self.show_error("Search Error", "No active search term.");
+            return false;
+        };
+        if term.is_empty() {
+            self.show_error("Search Error", "Search term cannot be empty.");
+            return false;
+        }
+        let term_lower = term.to_lowercase();
+        let start_index = self.table_state.selected().unwrap_or(0);
+        if let Some(effective_start) = start_index.checked_sub(1) {
+            for i in (0..=effective_start).rev() {
+                if self.event_matches_search(&self.events[i], &term_lower) {
+                    self.select_event(Some(i));
+                    return true;
+                }
+            }
+        }
+        for i in (start_index..self.events.len()).rev() {
+            if self.event_matches_search(&self.events[i], &term_lower) {
+                self.select_event(Some(i));
+                return true;
+            }
+        }
+        self.show_confirmation(
+            "Search",
+            "No previous matches found (searched from bottom).",
+        );
+        false
+    }
+    fn build_xpath_from_filter(&self) -> String {
+        if let Some(filter) = &self.active_filter {
+            let mut conditions = Vec::new();
+            if let Some(source) = &filter.source {
+                if !source.is_empty() {
+                    conditions.push(format!(
+                        "System/Provider[@Name='{}']",
+                        source.replace('\'', "&apos;").replace('"', "&quot;")
+                    ));
+                }
+            }
+            if let Some(id) = &filter.event_id {
+                if !id.is_empty() && id.chars().all(char::is_numeric) {
+                    conditions.push(format!("System/EventID={}", id));
+                }
+            }
+            let level_condition = match filter.level {
+                EventLevelFilter::Information => {
+                    Some("(System/Level=0 or System/Level=4)".to_string())
+                }
+                EventLevelFilter::Warning => Some("System/Level=3".to_string()),
+                EventLevelFilter::Error => Some("(System/Level=1 or System/Level=2)".to_string()),
+                EventLevelFilter::All => None,
+            };
+            if let Some(cond) = level_condition {
+                conditions.push(cond);
+            }
+            if conditions.is_empty() {
+                "*".to_string()
+            } else {
+                format!("*[{}]", conditions.join(" and "))
+            }
+        } else {
+            self.filter_level.to_xpath_query()
+        }
+    }
+    fn update_filtered_sources(&mut self) {
+        if self.available_sources.is_none() {
+            self.filter_dialog_filtered_sources.clear();
+            self.filter_dialog_filtered_source_selection = None;
+            self.filter_dialog_source_index = 0;
+            return;
+        }
+        
+        let sources = self.available_sources.as_ref().unwrap();
+        let input_lower = self.filter_dialog_source_input.to_lowercase();
+        
+        // Filter sources based on input - always show "Any Source"
+        self.filter_dialog_filtered_sources = sources
+            .iter()
+            .enumerate()
+            .filter(|(idx, name)| {
+                // Always include "Any Source" or match the filter text
+                *idx == 0 || name.to_lowercase().contains(&input_lower)
+            })
+            .map(|(idx, name)| (idx, name.clone()))
+            .collect();
+        
+        // If we have any matches, select the first one unless we already have a valid selection
+        if !self.filter_dialog_filtered_sources.is_empty() {
+            let current_selection_idx = self.filter_dialog_source_index;
+            
+            // Check if current selection is still in filtered list
+            let selection_still_valid = self.filter_dialog_filtered_sources
+                .iter()
+                .any(|(idx, _)| *idx == current_selection_idx);
+                
+            if !selection_still_valid {
+                // Select first matching item
+                self.filter_dialog_source_index = self.filter_dialog_filtered_sources[0].0;
+                self.filter_dialog_filtered_source_selection = Some(0);
+            } else {
+                // Update the selection position in the filtered list
+                self.filter_dialog_filtered_source_selection = self.filter_dialog_filtered_sources
+                    .iter()
+                    .position(|(idx, _)| *idx == self.filter_dialog_source_index);
+            }
+        } else {
+            self.filter_dialog_filtered_source_selection = None;
+            self.filter_dialog_source_index = 0;
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -731,7 +995,7 @@ impl Drop for AppState {
             unsafe {
                 let _ = EvtClose(handle);
             }
-            self.log("Closed active event query handle.");
+            self.log("ERROR - Failed to close query handle."); // Log if closing fails
         }
     }
 }
@@ -741,26 +1005,6 @@ fn sanitize_filename(filename: &str) -> String {
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
         .collect()
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    let mut terminal = init_terminal()?;
-    let mut app_state = AppState::new();
-    loop {
-        terminal.draw(|frame| ui(frame, &mut app_state))?;
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    handle_key_press(key, &mut app_state);
-                    if key.code == KeyCode::Char('q') {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    restore_terminal()?;
-    Ok(())
 }
 
 fn init_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -774,6 +1018,12 @@ fn restore_terminal() -> io::Result<()> {
     disable_raw_mode()?;
     execute!(stdout(), LeaveAlternateScreen)?;
     Ok(())
+}
+
+fn centered_fixed_rect(width: u16, height: u16, r: Rect) -> Rect {
+    let x = r.x + r.width.saturating_sub(width) / 2;
+    let y = r.y + r.height.saturating_sub(height) / 2;
+    Rect::new(x, y, width.min(r.width), height.min(r.height))
 }
 
 fn ui(frame: &mut Frame, app_state: &mut AppState) {
@@ -865,14 +1115,34 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         Constraint::Percentage(60),
         Constraint::Length(10),
     ];
+    let next_prev_style = if app_state.last_search_term.is_some() {
+        Style::new().bold().fg(Color::Gray)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
     let event_table_help_line = Line::from(vec![
         Span::styled("[s]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(" sort"),
-        Span::styled(" [l]", Style::new().bold().fg(Color::Gray)),
+        Span::raw(" sort | "),
+        Span::styled("[l]", Style::new().bold().fg(Color::Gray)),
         Span::raw(format!(
-            " level ({})",
+            " level({}) | ",
             app_state.filter_level.display_name()
         )),
+        Span::styled("[f]", Style::new().bold().fg(Color::Gray)),
+        Span::raw(format!(
+            " filter({}) | ",
+            if app_state.active_filter.is_some() {
+                "Active"
+            } else {
+                "Inactive"
+            }
+        )),
+        Span::styled("[/]", Style::new().bold().fg(Color::Gray)),
+        Span::raw(" search | "),
+        Span::styled("[n]", next_prev_style),
+        Span::raw(" next | "),
+        Span::styled("[p]", next_prev_style),
+        Span::raw(" prev"),
     ])
     .alignment(Alignment::Center);
     let event_table_help_title = Title::from(event_table_help_line)
@@ -910,16 +1180,15 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         app_state
             .events
             .get(selected_index)
-            .map_or("<Message not available>".to_string(), |event| {
-                event.message.clone()
-            })
+            .map_or("<Message not available>".to_string(), |e| e.message.clone())
     } else {
         "<No event selected>".to_string()
     };
     let message_lines = preview_message.lines().count() as u16;
     let available_height = preview_area.height.saturating_sub(2);
-    let max_scroll = message_lines.saturating_sub(available_height);
-    app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
+    app_state.preview_scroll = app_state
+        .preview_scroll
+        .min(message_lines.saturating_sub(available_height));
     let preview_paragraph = Paragraph::new(preview_message)
         .block(preview_block)
         .wrap(Wrap { trim: true })
@@ -962,8 +1231,8 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             let content_area = dialog_block.inner(dialog_area);
             event_details.current_visible_height = (content_area.height as usize).max(1);
             let visible_height = event_details.current_visible_height;
-            let current_content_string = event_details.current_content();
-            let content_lines: Vec<&str> = current_content_string.lines().collect();
+            let content = event_details.current_content();
+            let content_lines: Vec<&str> = content.lines().collect();
             let start_line = event_details
                 .scroll_position
                 .min(content_lines.len().saturating_sub(1));
@@ -1037,25 +1306,244 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             frame.render_widget(message_paragraph, content_area);
         }
     }
+    if app_state.is_searching {
+        let search_width = 40.min(frame.size().width.saturating_sub(4));
+        let search_height = 3;
+        let search_area = Rect::new(
+            (frame.size().width - search_width) / 2,
+            frame.size().height.saturating_sub(search_height + 2),
+            search_width,
+            search_height,
+        );
+        let search_block = Block::default()
+            .title("Find (Enter to search, Esc to cancel)")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        let search_text = format!("{}_", app_state.search_term);
+        let search_paragraph = Paragraph::new(search_text)
+            .block(search_block.clone())
+            .style(Style::default().fg(Color::White));
+        frame.render_widget(Clear, search_area);
+        frame.render_widget(search_paragraph, search_area);
+    }
+    if app_state.is_filter_dialog_visible {
+        let dialog_width = 50;
+        let dialog_height = 12;
+        let dialog_area = centered_fixed_rect(dialog_width, dialog_height, frame.size());
+        frame.render_widget(Clear, dialog_area);
+        let esc_hint_line = Line::from(vec![
+            Span::styled("[Esc]", Style::new().bold().fg(Color::Gray)),
+            Span::raw(" Cancel"),
+        ])
+        .alignment(Alignment::Center);
+        let esc_hint_title = Title::from(esc_hint_line)
+            .position(Position::Bottom)
+            .alignment(Alignment::Center);
+        let dialog_block = Block::default()
+            .title("Filter Events")
+            .title(esc_hint_title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Magenta));
+        let inner_area = dialog_block.inner(dialog_area);
+        frame.render_widget(dialog_block.clone(), dialog_area);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(1)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(inner_area);
+        let focused_style = Style::default().bg(Color::DarkGray);
+        let unfocused_style = Style::default();
+        frame.render_widget(Paragraph::new("Source:"), chunks[0]);
+        let source_style = if app_state.filter_dialog_focus == FilterFieldFocus::Source {
+            focused_style
+        } else {
+            unfocused_style
+        };
+        let source_input_display = if app_state.filter_dialog_focus == FilterFieldFocus::Source {
+            format!("{}_", app_state.filter_dialog_source_input)
+        } else if app_state.filter_dialog_source_input.is_empty() {
+            "[Type to filter sources]".to_string()
+        } else {
+            app_state.filter_dialog_source_input.clone()
+        };
+        frame.render_widget(
+            Paragraph::new(source_input_display).style(source_style),
+            chunks[1],
+        );
+        let selected_source_name = app_state
+            .available_sources
+            .as_ref()
+            .and_then(|v| v.get(app_state.filter_dialog_source_index).cloned())
+            .unwrap_or_else(|| "[Source List Unavailable]".to_string());
+        let preview_text = if app_state.filter_dialog_focus == FilterFieldFocus::Source && 
+                              !app_state.filter_dialog_filtered_sources.is_empty() {
+            let mut preview = String::from("Matches: ");
+            let selected_pos = app_state.filter_dialog_filtered_source_selection.unwrap_or(0);
+            
+            // Get up to 3 items centered around the selected position
+            let start_idx = if selected_pos > 1 { selected_pos - 1 } else { 0 };
+            let end_idx = (start_idx + 3).min(app_state.filter_dialog_filtered_sources.len());
+            
+            for (i, (_, name)) in app_state.filter_dialog_filtered_sources[start_idx..end_idx].iter().enumerate() {
+                if i > 0 {
+                    preview.push_str(", ");
+                }
+                
+                if i + start_idx == selected_pos {
+                    preview.push_str(&format!("[{}]", name));
+                } else {
+                    preview.push_str(name);
+                }
+            }
+            
+            if app_state.filter_dialog_filtered_sources.len() > 3 {
+                preview.push_str(&format!(" (+{} more)", app_state.filter_dialog_filtered_sources.len() - 3));
+            }
+            
+            preview
+        } else {
+            format!("Selected: {}", selected_source_name)
+        };
+        
+        frame.render_widget(
+            Paragraph::new(preview_text)
+                .alignment(Alignment::Left)
+                .style(Style::default().fg(Color::DarkGray)),
+            chunks[2],
+        );
+        frame.render_widget(Paragraph::new("Event ID:"), chunks[3]);
+        let event_id_input_style = if app_state.filter_dialog_focus == FilterFieldFocus::EventId {
+            focused_style
+        } else {
+            unfocused_style
+        };
+        let event_id_text = if app_state.filter_dialog_focus == FilterFieldFocus::EventId {
+            format!("{}_", app_state.filter_dialog_event_id)
+        } else {
+            app_state.filter_dialog_event_id.clone()
+        };
+        frame.render_widget(
+            Paragraph::new(event_id_text).style(event_id_input_style),
+            chunks[4],
+        );
+        let level_text = Line::from(vec![
+            Span::raw("Level: "),
+            Span::styled("< ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                app_state.filter_dialog_level.display_name(),
+                if app_state.filter_dialog_focus == FilterFieldFocus::Level {
+                    focused_style.add_modifier(Modifier::BOLD)
+                } else {
+                    unfocused_style
+                },
+            ),
+            Span::styled(" >", Style::default().fg(Color::Yellow)),
+        ]);
+        frame.render_widget(Paragraph::new(level_text), chunks[5]);
+        let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let apply_text = Span::styled(" [ Apply ] ", apply_style);
+        let clear_text = Span::styled(" [ Clear ] ", clear_style);
+        frame.render_widget(Paragraph::new(""), chunks[6]);
+        let button_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(chunks[7]);
+        frame.render_widget(
+            Paragraph::new(apply_text).alignment(Alignment::Center),
+            button_layout[0],
+        );
+        frame.render_widget(
+            Paragraph::new(clear_text).alignment(Alignment::Center),
+            button_layout[1],
+        );
+    }
 }
 
-fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
-    let current_focus = app_state.focus;
-    let mut status_to_show: Option<(String, String, bool)> = None;
-    let mut key_handled_by_dialog = false;
+fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
+    if let Some(dialog) = &mut app_state.status_dialog {
+        if dialog.visible {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => {
+                    dialog.dismiss();
+                    app_state.log("ERROR - Status dialog dismissed.");
+                }
+                _ => {
+                    app_state.log(&format!("Ignored key {:?} in status dialog.", key.code));
+                }
+            }
+            return PostKeyPressAction::None;
+        }
+    }
+    
+    // Handle search input mode
+    if app_state.is_searching {
+        match key.code {
+            KeyCode::Esc => {
+                app_state.is_searching = false;
+                app_state.search_term.clear();
+                return PostKeyPressAction::None;
+            }
+            KeyCode::Enter => {
+                if !app_state.search_term.is_empty() {
+                    app_state.is_searching = false;
+                    app_state.last_search_term = Some(app_state.search_term.clone());
+                    let result = app_state.find_next_match();
+                    app_state.search_term.clear();
+                    return PostKeyPressAction::None;
+                } else {
+                    app_state.is_searching = false;
+                    app_state.search_term.clear();
+                    return PostKeyPressAction::None;
+                }
+            }
+            KeyCode::Char(c) => {
+                app_state.search_term.push(c);
+                return PostKeyPressAction::None;
+            }
+            KeyCode::Backspace => {
+                app_state.search_term.pop();
+                return PostKeyPressAction::None;
+            }
+            _ => {
+                return PostKeyPressAction::None;
+            }
+        }
+    }
+    
+    let mut status_action = PostKeyPressAction::None;
+    let mut key_handled = false;
+    
     if let Some(dialog) = &mut app_state.event_details_dialog {
         if dialog.visible {
-            let visible_height = dialog.current_visible_height;
             match key.code {
                 KeyCode::Esc => {
                     dialog.dismiss();
-                    key_handled_by_dialog = true;
+                    key_handled = true;
                 }
                 KeyCode::Char('v') => {
                     dialog.toggle_view();
-                    key_handled_by_dialog = true;
+                    key_handled = true;
                 }
                 KeyCode::Char('s') => {
+                    key_handled = true;
                     let filename = format!(
                         "{}-{}-{}-{}.xml",
                         sanitize_filename(&dialog.log_name),
@@ -1066,159 +1554,401 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
                     match pretty_print_xml(&dialog.raw_xml) {
                         Ok(pretty_xml) => match fs::write(&filename, &pretty_xml) {
                             Ok(_) => {
-                                status_to_show = Some((
+                                status_action = PostKeyPressAction::ShowConfirmation(
                                     "Save Successful".to_string(),
-                                    format!("Event saved to:\\n{}", filename),
-                                    false,
-                                ));
+                                    format!("Event saved to:\n{}", filename),
+                                );
                                 dialog.dismiss();
                             }
                             Err(e) => {
                                 let err_msg =
                                     format!("Failed to save event to {}: {}", filename, e);
-                                app_state.log(&err_msg);
-                                status_to_show = Some(("Save Failed".to_string(), err_msg, true));
+                                status_action = PostKeyPressAction::ShowConfirmation(
+                                    "Save Failed".to_string(),
+                                    err_msg,
+                                );
                             }
                         },
                         Err(err_msg) => {
                             let log_msg = format!("Failed to format XML for saving: {}", err_msg);
-                            app_state.log(&log_msg);
-                            status_to_show = Some(("Save Failed".to_string(), log_msg, true));
+                            status_action = PostKeyPressAction::ShowConfirmation(
+                                "Save Failed".to_string(),
+                                log_msg,
+                            );
                         }
                     }
-                    key_handled_by_dialog = true;
                 }
                 KeyCode::Up => {
                     dialog.scroll_up();
-                    key_handled_by_dialog = true;
+                    key_handled = true;
                 }
                 KeyCode::Down => {
-                    dialog.scroll_down(visible_height);
-                    key_handled_by_dialog = true;
+                    dialog.scroll_down(dialog.current_visible_height);
+                    key_handled = true;
                 }
                 KeyCode::PageUp => {
                     dialog.page_up();
-                    key_handled_by_dialog = true;
+                    key_handled = true;
                 }
                 KeyCode::PageDown => {
-                    dialog.page_down(visible_height);
-                    key_handled_by_dialog = true;
+                    dialog.page_down(dialog.current_visible_height);
+                    key_handled = true;
                 }
                 KeyCode::Home | KeyCode::Char('g') => {
                     dialog.go_to_top();
-                    key_handled_by_dialog = true;
+                    key_handled = true;
                 }
                 KeyCode::End | KeyCode::Char('G') => {
-                    dialog.go_to_bottom(visible_height);
-                    key_handled_by_dialog = true;
+                    dialog.go_to_bottom(dialog.current_visible_height);
+                    key_handled = true;
                 }
                 _ => {}
             }
         }
     }
-    if !key_handled_by_dialog {
-        if let Some(dialog) = &mut app_state.status_dialog {
-            if dialog.visible {
-                if let KeyCode::Enter | KeyCode::Esc = key.code {
-                    dialog.dismiss();
-                    key_handled_by_dialog = true;
+    if key_handled {
+        return status_action;
+    }
+    if app_state.is_filter_dialog_visible {
+        app_state.log(&format!(
+            "Filter Dialog Key: {:?}, Focus: {:?}",
+            key.code, app_state.filter_dialog_focus
+        ));
+        match key.code {
+            KeyCode::Esc => {
+                app_state.is_filter_dialog_visible = false;
+                return PostKeyPressAction::None;
+            }
+            KeyCode::Tab => {
+                app_state.filter_dialog_focus = match app_state.filter_dialog_focus {
+                    FilterFieldFocus::Source => FilterFieldFocus::EventId,
+                    FilterFieldFocus::EventId => FilterFieldFocus::Level,
+                    FilterFieldFocus::Level => FilterFieldFocus::Apply,
+                    FilterFieldFocus::Apply => FilterFieldFocus::Clear,
+                    FilterFieldFocus::Clear => FilterFieldFocus::Source,
+                };
+            }
+            KeyCode::BackTab => {
+                app_state.filter_dialog_focus = match app_state.filter_dialog_focus {
+                    FilterFieldFocus::Source => FilterFieldFocus::Clear,
+                    FilterFieldFocus::EventId => FilterFieldFocus::Source,
+                    FilterFieldFocus::Level => FilterFieldFocus::EventId,
+                    FilterFieldFocus::Apply => FilterFieldFocus::Level,
+                    FilterFieldFocus::Clear => FilterFieldFocus::Apply,
+                };
+            }
+            KeyCode::Enter => match app_state.filter_dialog_focus {
+                FilterFieldFocus::Source => {
+                    if let Some(selected_pos) = app_state.filter_dialog_filtered_source_selection {
+                        if let Some((idx, _)) = app_state.filter_dialog_filtered_sources.get(selected_pos) {
+                            app_state.filter_dialog_source_index = *idx;
+                        }
+                    }
                 }
+                FilterFieldFocus::EventId => {
+                    app_state.filter_dialog_focus = FilterFieldFocus::Level;
+                }
+                FilterFieldFocus::Level => {
+                    app_state.filter_dialog_focus = FilterFieldFocus::Apply;
+                }
+                FilterFieldFocus::Apply => {
+                    let selected_source = if app_state.filter_dialog_source_index == 0 {
+                        None
+                    } else {
+                        app_state
+                            .available_sources
+                            .as_ref()
+                            .and_then(|sources| sources.get(app_state.filter_dialog_source_index))
+                            .cloned()
+                    };
+                    let criteria = FilterCriteria {
+                        source: selected_source,
+                        event_id: if app_state.filter_dialog_event_id.trim().is_empty() {
+                            None
+                        } else {
+                            Some(app_state.filter_dialog_event_id.trim().to_string())
+                        },
+                        level: app_state.filter_dialog_level,
+                    };
+                    if criteria.source.is_none()
+                        && criteria.event_id.is_none()
+                        && criteria.level == EventLevelFilter::All
+                    {
+                        app_state.active_filter = None;
+                    } else {
+                        app_state.active_filter = Some(criteria);
+                    }
+                    app_state.is_filter_dialog_visible = false;
+                    return PostKeyPressAction::ReloadData;
+                }
+                FilterFieldFocus::Clear => {
+                    app_state.active_filter = None;
+                    app_state.is_filter_dialog_visible = false;
+                    return PostKeyPressAction::ReloadData;
+                }
+            },
+            KeyCode::Char(c) => match app_state.filter_dialog_focus {
+                FilterFieldFocus::Source => {
+                    app_state.filter_dialog_source_input.push(c);
+                    app_state.update_filtered_sources();
+                    
+                    // If we have matches after filtering, select the first one
+                    if !app_state.filter_dialog_filtered_sources.is_empty() {
+                        if app_state.filter_dialog_filtered_source_selection.is_none() {
+                            app_state.filter_dialog_filtered_source_selection = Some(0);
+                            app_state.filter_dialog_source_index = app_state.filter_dialog_filtered_sources[0].0;
+                        }
+                    }
+                }
+                FilterFieldFocus::EventId => {
+                    if c.is_ascii_digit() {
+                        app_state.filter_dialog_event_id.push(c);
+                    }
+                }
+                _ => {}
+            },
+            KeyCode::Backspace => match app_state.filter_dialog_focus {
+                FilterFieldFocus::Source => {
+                    app_state.filter_dialog_source_input.pop();
+                    app_state.update_filtered_sources();
+                    
+                    // If we have matches after filtering, select the first one
+                    if !app_state.filter_dialog_filtered_sources.is_empty() {
+                        if app_state.filter_dialog_filtered_source_selection.is_none() {
+                            app_state.filter_dialog_filtered_source_selection = Some(0);
+                            app_state.filter_dialog_source_index = app_state.filter_dialog_filtered_sources[0].0;
+                        }
+                    }
+                }
+                FilterFieldFocus::EventId => {
+                    app_state.filter_dialog_event_id.pop();
+                }
+                _ => {}
+            },
+            KeyCode::Left => match app_state.filter_dialog_focus {
+                FilterFieldFocus::Source => {
+                    // Left key doesn't make sense for navigating a filtered list
+                    // Keeping for backward compatibility
+                }
+                FilterFieldFocus::Level => {
+                    app_state.filter_dialog_level = app_state.filter_dialog_level.previous();
+                }
+                _ => {}
+            },
+            KeyCode::Right => match app_state.filter_dialog_focus {
+                FilterFieldFocus::Source => {
+                    // Right key doesn't make sense for navigating a filtered list
+                    // Keeping for backward compatibility
+                }
+                FilterFieldFocus::Level => {
+                    app_state.filter_dialog_level = app_state.filter_dialog_level.next();
+                }
+                _ => {}
+            },
+            KeyCode::Up => match app_state.filter_dialog_focus {
+                FilterFieldFocus::Source => {
+                    // Navigate up in the filtered sources list
+                    if let Some(current_pos) = app_state.filter_dialog_filtered_source_selection {
+                        if current_pos > 0 {
+                            let new_pos = current_pos - 1;
+                            app_state.filter_dialog_filtered_source_selection = Some(new_pos);
+                            if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
+                                app_state.filter_dialog_source_index = idx;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            KeyCode::Down => match app_state.filter_dialog_focus {
+                FilterFieldFocus::Source => {
+                    // Navigate down in the filtered sources list
+                    if let Some(current_pos) = app_state.filter_dialog_filtered_source_selection {
+                        if current_pos + 1 < app_state.filter_dialog_filtered_sources.len() {
+                            let new_pos = current_pos + 1;
+                            app_state.filter_dialog_filtered_source_selection = Some(new_pos);
+                            if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
+                                app_state.filter_dialog_source_index = idx;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        return PostKeyPressAction::None;
+    }
+    if let Some(dialog) = &mut app_state.event_details_dialog {
+        if dialog.visible {
+            match key.code {
+                KeyCode::Esc => {
+                    dialog.dismiss();
+                    return status_action;
+                }
+                KeyCode::Char('v') => {
+                    dialog.toggle_view();
+                    return status_action;
+                }
+                KeyCode::Char('s') => {
+                    let filename = format!(
+                        "{}-{}-{}-{}.xml",
+                        sanitize_filename(&dialog.log_name),
+                        sanitize_filename(&dialog.event_id),
+                        dialog.event_datetime.replace(':', "-").replace(' ', "_"),
+                        sanitize_filename(&dialog.event_source)
+                    );
+                    if let Ok(pretty_xml) = pretty_print_xml(&dialog.raw_xml) {
+                        if fs::write(&filename, &pretty_xml).is_ok() {
+                            status_action = PostKeyPressAction::ShowConfirmation(
+                                "Save Successful".to_string(),
+                                format!("Event saved to:\n{}", filename),
+                            );
+                            dialog.dismiss();
+                        } else {
+                            status_action = PostKeyPressAction::ShowConfirmation(
+                                "Save Failed".to_string(),
+                                format!("Failed to save event to {}.", filename),
+                            );
+                        }
+                    } else {
+                        status_action = PostKeyPressAction::ShowConfirmation(
+                            "Save Failed".to_string(),
+                            "Failed to format XML for saving.".to_string(),
+                        );
+                    }
+                    return status_action;
+                }
+                KeyCode::Up => {
+                    dialog.scroll_up();
+                    return status_action;
+                }
+                KeyCode::Down => {
+                    dialog.scroll_down(dialog.current_visible_height);
+                    return status_action;
+                }
+                KeyCode::PageUp => {
+                    dialog.page_up();
+                    return status_action;
+                }
+                KeyCode::PageDown => {
+                    dialog.page_down(dialog.current_visible_height);
+                    return status_action;
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    dialog.go_to_top();
+                    return status_action;
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    dialog.go_to_bottom(dialog.current_visible_height);
+                    return status_action;
+                }
+                _ => {}
             }
         }
     }
-    if let Some((title, msg, is_error)) = status_to_show {
-        if is_error {
-            app_state.show_error(&title, &msg);
-        } else {
-            app_state.show_confirmation(&title, &msg);
-        }
-        key_handled_by_dialog = true;
-    }
-    if key_handled_by_dialog {
-        return;
-    }
-    match current_focus {
+    match app_state.focus {
         PanelFocus::Logs => match key.code {
-            KeyCode::Char('q') => return,
-            KeyCode::Up => app_state.previous_log(),
-            KeyCode::Down => app_state.next_log(),
+            KeyCode::Char('q') => return PostKeyPressAction::Quit,
+            KeyCode::Up => {
+                app_state.previous_log();
+                return PostKeyPressAction::ReloadData;
+            }
+            KeyCode::Down => {
+                app_state.next_log();
+                return PostKeyPressAction::ReloadData;
+            }
             KeyCode::Right | KeyCode::Tab => {
-                #[cfg(target_os = "windows")]
-                if app_state.query_handle.is_none() {
-                    app_state.start_or_continue_log_load(true);
-                }
                 app_state.switch_focus();
             }
             KeyCode::Enter => {
-                #[cfg(target_os = "windows")]
-                app_state.start_or_continue_log_load(true);
                 app_state.switch_focus();
             }
             _ => {}
         },
         PanelFocus::Events => match key.code {
-            KeyCode::Char('q') => return,
-            KeyCode::Up => app_state.scroll_up(),
-            KeyCode::Down => app_state.scroll_down(),
-            KeyCode::PageUp => app_state.page_up(),
-            KeyCode::PageDown => app_state.page_down(),
-            KeyCode::Home | KeyCode::Char('g') => app_state.go_to_top(),
-            KeyCode::End | KeyCode::Char('G') => app_state.go_to_bottom(),
-            KeyCode::Enter => app_state.show_event_details(),
-            KeyCode::Left | KeyCode::BackTab => app_state.switch_focus(),
-            KeyCode::Tab => app_state.focus = PanelFocus::Preview,
+            KeyCode::Char('q') => return PostKeyPressAction::Quit,
+            KeyCode::Up => {
+                app_state.scroll_up();
+            }
+            KeyCode::Down => {
+                app_state.scroll_down();
+            }
+            KeyCode::PageUp => {
+                app_state.page_up();
+            }
+            KeyCode::PageDown => {
+                app_state.page_down();
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                app_state.go_to_top();
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                app_state.go_to_bottom();
+            }
+            KeyCode::Enter => {
+                app_state.show_event_details();
+            }
+            KeyCode::Left | KeyCode::BackTab => {
+                app_state.switch_focus();
+            }
+            KeyCode::Tab => {
+                app_state.focus = PanelFocus::Preview;
+            }
             KeyCode::Char('s') => {
                 app_state.sort_descending = !app_state.sort_descending;
-                #[cfg(target_os = "windows")]
-                {
-                    if let Some(handle) = app_state.query_handle.take() {
-                        unsafe {
-                            let _ = EvtClose(handle);
-                        }
-                    }
-                    app_state.events.clear();
-                    app_state.table_state.select(None);
-                    app_state.no_more_events = false;
-                    app_state.is_loading = false;
-                    app_state.preview_scroll = 0;
-                    app_state.start_or_continue_log_load(true);
-                }
+                return PostKeyPressAction::ReloadData;
             }
             KeyCode::Char('l') => {
                 app_state.filter_level = app_state.filter_level.next();
-                app_state.log(&format!(
-                    "Set level filter to: {}",
-                    app_state.filter_level.display_name()
-                ));
-                #[cfg(target_os = "windows")]
-                {
-                    if let Some(handle) = app_state.query_handle.take() {
-                        unsafe {
-                            let _ = EvtClose(handle);
-                        }
-                    }
-                    app_state.events.clear();
-                    app_state.table_state.select(None);
-                    app_state.no_more_events = false;
-                    app_state.is_loading = false;
-                    app_state.preview_scroll = 0;
-                    app_state.start_or_continue_log_load(true);
+                return PostKeyPressAction::ReloadData;
+            }
+            KeyCode::Char('f') => {
+                return PostKeyPressAction::OpenFilterDialog;
+            }
+            KeyCode::Char('/') => {
+                app_state.is_searching = true;
+                app_state.search_term.clear();
+            }
+            KeyCode::Char('n') => {
+                if app_state.last_search_term.is_some() {
+                    let _ = app_state.find_next_match();
+                }
+            }
+            KeyCode::Char('p') | KeyCode::Char('N') => {
+                if app_state.last_search_term.is_some() {
+                    let _ = app_state.find_previous_match();
                 }
             }
             _ => {}
         },
         PanelFocus::Preview => match key.code {
-            KeyCode::Char('q') => return,
-            KeyCode::Up => app_state.preview_scroll_up(1),
-            KeyCode::Down => app_state.preview_scroll_down(1),
-            KeyCode::PageUp => app_state.preview_scroll_up(10),
-            KeyCode::PageDown => app_state.preview_scroll_down(10),
-            KeyCode::Home | KeyCode::Char('g') => app_state.preview_go_to_top(),
-            KeyCode::Left | KeyCode::BackTab => app_state.switch_focus(),
-            KeyCode::Tab => app_state.focus = PanelFocus::Logs,
+            KeyCode::Char('q') => return PostKeyPressAction::Quit,
+            KeyCode::Up => {
+                app_state.preview_scroll_up(1);
+            }
+            KeyCode::Down => {
+                app_state.preview_scroll_down(1);
+            }
+            KeyCode::PageUp => {
+                app_state.preview_scroll_up(10);
+            }
+            KeyCode::PageDown => {
+                app_state.preview_scroll_down(10);
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                app_state.preview_go_to_top();
+            }
+            KeyCode::Left | KeyCode::BackTab => {
+                app_state.switch_focus();
+            }
+            KeyCode::Tab => {
+                app_state.focus = PanelFocus::Logs;
+            }
             _ => {}
         },
     }
+    PostKeyPressAction::None
 }
 
 fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
@@ -1262,4 +1992,74 @@ fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
     }
     let bytes = writer.into_inner().into_inner();
     String::from_utf8(bytes).map_err(|e| format!("UTF-8 Conversion Error: {}", e))
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let mut terminal = init_terminal()?;
+    let mut app_state = AppState::new();
+    #[cfg(target_os = "windows")]
+    app_state.start_or_continue_log_load(true);
+    loop {
+        terminal.draw(|frame| ui(frame, &mut app_state))?;
+        let mut post_action = PostKeyPressAction::None;
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    post_action = handle_key_press(key, &mut app_state);
+                }
+            }
+        }
+        match post_action {
+            PostKeyPressAction::ReloadData => {
+                #[cfg(target_os = "windows")]
+                {
+                    if let Some(handle) = app_state.query_handle.take() {
+                        unsafe {
+                            let _ = EvtClose(handle);
+                        }
+                    }
+                    app_state.events.clear();
+                    app_state.table_state.select(None);
+                    app_state.no_more_events = false;
+                    app_state.is_loading = false;
+                    app_state.preview_scroll = 0;
+                    app_state.start_or_continue_log_load(true);
+                }
+            }
+            PostKeyPressAction::ShowConfirmation(title, msg) => {
+                app_state.show_confirmation(&title, &msg);
+            }
+            PostKeyPressAction::OpenFilterDialog => {
+                if app_state.available_sources.is_none() {
+                    #[cfg(target_os = "windows")]
+                    {
+                        app_state.available_sources = load_available_sources(&mut app_state);
+                    }
+                }
+                app_state.filter_dialog_source_index = 0;
+                if let Some(active) = &app_state.active_filter {
+                    if let Some(ref source) = active.source {
+                        if let Some(ref sources) = app_state.available_sources {
+                            if let Some(idx) = sources.iter().position(|s| s == source) {
+                                app_state.filter_dialog_source_index = idx;
+                            }
+                        }
+                    }
+                    app_state.filter_dialog_event_id = active.event_id.clone().unwrap_or_default();
+                    app_state.filter_dialog_level = active.level;
+                } else {
+                    app_state.filter_dialog_event_id.clear();
+                    app_state.filter_dialog_level = EventLevelFilter::All;
+                }
+                app_state.filter_dialog_source_input.clear();
+                app_state.update_filtered_sources();
+                app_state.filter_dialog_focus = FilterFieldFocus::Source;
+                app_state.is_filter_dialog_visible = true;
+            }
+            PostKeyPressAction::Quit => break,
+            PostKeyPressAction::None => {}
+        }
+    }
+    restore_terminal()?;
+    Ok(())
 }

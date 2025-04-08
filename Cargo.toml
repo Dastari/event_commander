@@ -3,8 +3,6 @@ name = "event_commander"
 version = "1.0.1"
 edition = "2024"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 ratatui = { version = "0.26.3", features = ["crossterm"] }
 crossterm = "0.27.0"
@@ -14,8 +12,8 @@ windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_System_Ev
 chrono = "0.4"
 
 [profile.release]
-opt-level = 'z'  # Optimize for size.
+opt-level = 'z' 
 lto = true
 codegen-units = 1
 panic = 'abort'
-strip = true     # Strip symbols from binary
+strip = true   
