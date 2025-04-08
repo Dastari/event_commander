@@ -16,13 +16,10 @@ use std::{
 };
 use windows::{
     core::PCWSTR,
-    Win32::Foundation::GetLastError,
-    Win32::System::EventLog::{EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml, EVT_HANDLE},
+    Win32::Foundation::{GetLastError, ERROR_NO_MORE_ITEMS},
+    Win32::System::EventLog::{EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml, EVT_HANDLE, EvtQueryChannelPath, EvtQueryReverseDirection},
 };
 
-const EVT_QUERY_CHANNEL_PATH: u32 = 0x1;
-const EVT_QUERY_REVERSE_DIRECTION: u32 = 0x100;
-const ERROR_NO_MORE_ITEMS: u32 = 259;
 const EVENT_BATCH_SIZE: usize = 100;
 const LOG_NAMES: [&str; 5] = [
     "Application",
@@ -258,7 +255,8 @@ impl AppState {
         let channel_wide = to_wide_string(&self.selected_log_name);
         let query_str_wide = to_wide_string("*");
         unsafe {
-            let query_handle = EvtQuery(None, PCWSTR::from_raw(channel_wide.as_ptr()), PCWSTR::from_raw(query_str_wide.as_ptr()), EVT_QUERY_CHANNEL_PATH | EVT_QUERY_REVERSE_DIRECTION);
+            let flags = EvtQueryChannelPath.0 | EvtQueryReverseDirection.0;
+            let query_handle = EvtQuery(None, PCWSTR::from_raw(channel_wide.as_ptr()), PCWSTR::from_raw(query_str_wide.as_ptr()), flags);
             if query_handle.is_err() {
                 self.show_error("Query Error", &format!("Failed to query log '{}'", self.selected_log_name));
                 return;
@@ -273,7 +271,7 @@ impl AppState {
                 };
                 if !next_result.is_ok() {
                     let error = GetLastError().0;
-                    if error == ERROR_NO_MORE_ITEMS {
+                    if error == ERROR_NO_MORE_ITEMS.0 {
                         break;
                     } else {
                         self.show_error("Reading Error", &format!("Error reading event log '{}': WIN32_ERROR({})", self.selected_log_name, error));
@@ -297,8 +295,6 @@ impl AppState {
             }
             let _ = EvtClose(query_handle);
         }
-        // Sort events by datetime string in reverse order (newest first)
-        self.events.sort_by(|a, b| b.datetime.cmp(&a.datetime));
 
         if !self.events.is_empty() {
             self.table_state.select(Some(0));
