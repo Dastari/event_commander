@@ -20,9 +20,10 @@ use windows::{
     Win32::Foundation::{GetLastError, ERROR_NO_MORE_ITEMS},
     Win32::System::EventLog::{EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml, EVT_HANDLE, EvtQueryChannelPath, EvtQueryReverseDirection},
 };
-extern crate minidom;
-use minidom::Element;
+use minidom::{Element, NSChoice};
 use std::collections::HashMap;
+
+const EVENT_XML_NS: &str = "http://schemas.microsoft.com/win/2004/08/events/event";
 
 const EVENT_BATCH_SIZE: usize = 100;
 const LOG_NAMES: [&str; 5] = [
@@ -73,7 +74,7 @@ fn find_attribute_value<'a>(xml: &'a str, attribute_name: &str) -> Option<&'a st
 
 // Function to get child element text or default
 fn get_child_text(parent: &Element, child_name: &str) -> String {
-    parent.get_child(child_name, parent.ns())
+    parent.get_child(child_name, EVENT_XML_NS)
         .map_or(String::new(), |el| el.text().to_string())
 }
 
@@ -86,8 +87,8 @@ fn get_attr(element: &Element, attr_name: &str) -> Option<String> {
 fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
     let mut data_map: HashMap<String, String> = HashMap::new();
 
-    // Iterate through <Data> child elements
-    for data_el in event_data_element.children().filter(|c| c.is("Data", event_data_element.ns())) {
+    // Iterate through <Data> child elements with namespace
+    for data_el in event_data_element.children().filter(|c| c.is("Data", EVENT_XML_NS)) {
         if let Some(name) = data_el.attr("Name") {
             data_map.insert(name.to_string(), data_el.text().to_string());
         }
@@ -137,7 +138,7 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
 // --- Fallback Formatter using minidom --- 
 fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
     event_data_element.children()
-        .filter(|c| c.is("Data", event_data_element.ns()))
+        .filter(|c| c.is("Data", EVENT_XML_NS))
         .map(|data_el| {
             let name = data_el.attr("Name").unwrap_or("Data");
             let value = data_el.text();
@@ -165,9 +166,9 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
 
     if let Ok(root) = root {
         // Find the <System> element (required)
-        if let Some(system) = root.get_child("System", root.ns()) {
+        if let Some(system) = root.get_child("System", EVENT_XML_NS) {
             // Extract Provider Name from attribute
-            source = system.get_child("Provider", root.ns())
+            source = system.get_child("Provider", EVENT_XML_NS)
                         .and_then(|prov| get_attr(prov, "Name"))
                         .unwrap_or_else(|| "<Unknown Provider>".to_string());
             if source.starts_with("Microsoft-Windows-") {
@@ -185,7 +186,7 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
                  _ => format!("Unknown({})", level_raw),
             };
 
-            datetime = system.get_child("TimeCreated", root.ns())
+            datetime = system.get_child("TimeCreated", EVENT_XML_NS)
                           .and_then(|time_el| get_attr(time_el, "SystemTime"))
                           .map(|time_str| {
                               match chrono::DateTime::parse_from_rfc3339(&time_str) {
@@ -197,7 +198,7 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
         }
 
         // Find <EventData> (optional) and format message
-        if let Some(event_data) = root.get_child("EventData", root.ns()) {
+        if let Some(event_data) = root.get_child("EventData", EVENT_XML_NS) {
              message = if source == "Windows Error Reporting" && id == "1001" {
                 format_wer_event_data_minidom(event_data)
             } else {
