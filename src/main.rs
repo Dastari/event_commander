@@ -9,30 +9,22 @@ use quick_xml::{Reader, Writer, events::Event as XmlEvent};
 use ratatui::{
     prelude::*,
     text::{Line, Span},
+    widgets::block::{Position, Title},
     widgets::{
         Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
         Wrap,
     },
-    widgets::block::{Position, Title},
 };
-use std::io::Cursor;
 use std::{
     collections::HashMap,
     error::Error,
     fs,
+    io::Cursor,
     io::{self, Stdout, stdout},
     time::Duration,
     vec,
 };
-use windows::Win32::{
-    Foundation::{ERROR_NO_MORE_ITEMS, GetLastError},
-    System::EventLog::{
-        EvtClose, EvtNext, EvtQuery, EvtQueryChannelPath, EvtQueryReverseDirection, EVT_HANDLE,
-        EvtRender, EvtRenderEventXml, EvtSubscribe, EvtSubscribeToFutureEvents, EvtRpcLogin,
-        EVT_SUBSCRIBE_FLAGS, EVT_RPC_LOGIN, EVT_RPC_LOGIN_FLAGS,
-    },
-};
-use windows::core::PCWSTR;
+use windows::Win32::System::EventLog::{EVT_HANDLE, EvtRender, EvtRenderEventXml};
 
 const EVENT_XML_NS: &str = "http://schemas.microsoft.com/win/2004/08/events/event";
 const EVENT_BATCH_SIZE: usize = 100;
@@ -378,9 +370,9 @@ impl EventDetailsDialog {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum EventLevelFilter {
     All,
-    Information, // Levels 0, 4
-    Warning,     // Level 3
-    Error,       // Levels 1, 2 (Critical, Error)
+    Information,
+    Warning,
+    Error,
 }
 
 impl EventLevelFilter {
@@ -392,7 +384,6 @@ impl EventLevelFilter {
             Self::Error => Self::All,
         }
     }
-
     fn display_name(&self) -> &str {
         match self {
             Self::All => "All",
@@ -401,8 +392,6 @@ impl EventLevelFilter {
             Self::Error => "Error/Crit",
         }
     }
-
-    // Helper to generate the XPath query fragment
     fn to_xpath_query(&self) -> String {
         match self {
             Self::All => "*".to_string(),
@@ -543,16 +532,12 @@ impl AppState {
             let query_str = self.filter_level.to_xpath_query();
             let query_str_wide = to_wide_string(&query_str);
             self.log(&format!("Using query: {}", query_str));
-
-            // Determine flags based on sort direction
             let flags = if self.sort_descending {
                 EvtQueryChannelPath.0 | EvtQueryReverseDirection.0
             } else {
-                EvtQueryChannelPath.0 // Ascending (oldest first)
+                EvtQueryChannelPath.0
             };
-
             unsafe {
-                // Use the dynamically determined flags and query string
                 match EvtQuery(
                     None,
                     PCWSTR::from_raw(channel_wide.as_ptr()),
@@ -792,55 +777,36 @@ fn restore_terminal() -> io::Result<()> {
 }
 
 fn ui(frame: &mut Frame, app_state: &mut AppState) {
-    // Original layout restored: Horizontal split for Logs | Right Pane
-    let main_layout = Layout::horizontal([
-        Constraint::Max(30), // Logs panel max width 30
-        Constraint::Min(0),  // Right pane takes remaining space
-    ])
-    .split(frame.size());
-
+    let main_layout =
+        Layout::horizontal([Constraint::Max(30), Constraint::Min(0)]).split(frame.size());
     let logs_area = main_layout[0];
     let right_pane_area = main_layout[1];
-
-    // Vertical split for Right Pane: Events | Preview
-    let right_layout = Layout::vertical([
-        Constraint::Min(0), // Events table takes most space
-        Constraint::Length(10), // Preview pane fixed height 10
-    ])
-    .split(right_pane_area);
-
+    let right_layout =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(10)]).split(right_pane_area);
     let events_area = right_layout[0];
     let preview_area = right_layout[1];
-
-    // --- Log List ---
     let log_items: Vec<ListItem> = LOG_NAMES.iter().map(|&name| ListItem::new(name)).collect();
-
-    // Create the help text Line for the log list footer
     let log_list_help_line = Line::from(vec![
         Span::styled("[q]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(" quit "), // Removed separator
+        Span::raw(" quit "),
         Span::styled("[F1]", Style::new().bold().fg(Color::Gray)),
         Span::raw(" help"),
     ])
     .alignment(Alignment::Center);
-
-    // Create a Title for the bottom border using the help line
     let log_list_help_title = Title::from(log_list_help_line)
         .position(Position::Bottom)
         .alignment(Alignment::Center);
-
     let log_list_block = Block::default()
-        .title("Event Viewer (Local)") // Existing top title
-        .title(log_list_help_title) // Add help text as bottom title
+        .title("Event Viewer (Local)")
+        .title(log_list_help_title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs {
             Color::Cyan
         } else {
             Color::White
         }));
-
     let log_list = List::new(log_items)
-        .block(log_list_block) // Use the modified block
+        .block(log_list_block)
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(
             if app_state.focus == PanelFocus::Logs {
                 Color::Blue
@@ -852,8 +818,6 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let mut log_list_state = ListState::default();
     log_list_state.select(Some(app_state.selected_log_index));
     frame.render_stateful_widget(log_list, logs_area, &mut log_list_state);
-
-    // --- Event Table ---
     let event_rows: Vec<Row> = app_state
         .events
         .iter()
@@ -872,9 +836,11 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             ])
         })
         .collect();
-
-    // Create header with sort indicator
-    let sort_indicator = if app_state.sort_descending { " ↓" } else { " ↑" };
+    let sort_indicator = if app_state.sort_descending {
+        " ↓"
+    } else {
+        " ↑"
+    };
     let datetime_header = format!("Date and Time{}", sort_indicator);
     let header_cells = [
         Cell::from("Level"),
@@ -883,37 +849,38 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         Cell::from("Event ID"),
     ]
     .into_iter()
-    .map(|cell| cell.style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-
+    .map(|cell| {
+        cell.style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
     let header = Row::new(header_cells)
         .style(Style::default().bg(Color::DarkGray))
         .height(1);
-
-    // Adjust widths for sort indicator
     let widths = [
-        Constraint::Length(11), // Level
-        Constraint::Length(22), // Date and Time + indicator
-        Constraint::Percentage(60), // Source
-        Constraint::Length(10), // Event ID
+        Constraint::Length(11),
+        Constraint::Length(22),
+        Constraint::Percentage(60),
+        Constraint::Length(10),
     ];
-
-    // Create the combined help text Line for the event table footer
     let event_table_help_line = Line::from(vec![
         Span::styled("[s]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(" sort"), 
+        Span::raw(" sort"),
         Span::styled(" [l]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(format!(" level ({})", app_state.filter_level.display_name())),
+        Span::raw(format!(
+            " level ({})",
+            app_state.filter_level.display_name()
+        )),
     ])
     .alignment(Alignment::Center);
-
-    // Create a Title for the bottom border using the help line
     let event_table_help_title = Title::from(event_table_help_line)
         .position(Position::Bottom)
         .alignment(Alignment::Center);
-
     let event_table_block = Block::default()
-        .title(format!("Events: {}", app_state.selected_log_name)) // Top title
-        .title(event_table_help_title) // Add combined help as bottom title
+        .title(format!("Events: {}", app_state.selected_log_name))
+        .title(event_table_help_title)
         .borders(Borders::ALL)
         .border_style(
             Style::default().fg(if app_state.focus == PanelFocus::Events {
@@ -922,7 +889,6 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
                 Color::White
             }),
         );
-
     let event_table = Table::new(event_rows, widths)
         .header(header)
         .block(event_table_block)
@@ -930,8 +896,6 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .highlight_symbol(">> ")
         .column_spacing(1);
     frame.render_stateful_widget(event_table, events_area, &mut app_state.table_state);
-
-    // --- Preview Pane ---
     let preview_block = Block::default()
         .title("Event Message Preview")
         .borders(Borders::ALL)
@@ -952,20 +916,15 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     } else {
         "<No event selected>".to_string()
     };
-
-    // Clamp preview_scroll based on content height and available area
     let message_lines = preview_message.lines().count() as u16;
-    let available_height = preview_area.height.saturating_sub(2); // Subtract 2 for top/bottom borders
+    let available_height = preview_area.height.saturating_sub(2);
     let max_scroll = message_lines.saturating_sub(available_height);
     app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
-
     let preview_paragraph = Paragraph::new(preview_message)
         .block(preview_block)
         .wrap(Wrap { trim: true })
         .scroll((app_state.preview_scroll, 0));
     frame.render_widget(preview_paragraph, preview_area);
-
-    // --- Dialogs ---
     if let Some(event_details) = &mut app_state.event_details_dialog {
         if event_details.visible {
             let dialog_width = 70.min(frame.size().width.saturating_sub(4));
@@ -982,8 +941,6 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
                 DetailsViewMode::RawXml => " (Raw XML)",
             };
             let dialog_title = format!("{}{}", event_details.title, view_mode_suffix);
-
-            // Create the help text Line
             let help_text_line = Line::from(vec![
                 Span::styled(" [Esc]", Style::default().fg(Color::Gray)),
                 Span::raw(" Dismiss "),
@@ -993,24 +950,16 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
                 Span::raw(" Save Event to Disk "),
             ])
             .alignment(Alignment::Center);
-
-            // Create a Title for the bottom border
             let help_title = Title::from(help_text_line)
                 .position(Position::Bottom)
                 .alignment(Alignment::Center);
-
             let dialog_block = Block::default()
-                .title(dialog_title) // Top title
-                .title(help_title)   // Bottom title (help text)
+                .title(dialog_title)
+                .title(help_title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Blue));
-
             frame.render_widget(dialog_block.clone(), dialog_area);
-
-            // Get the inner area *after* defining the block with borders/titles
             let content_area = dialog_block.inner(dialog_area);
-
-            // Calculate visible height based on the actual content area
             event_details.current_visible_height = (content_area.height as usize).max(1);
             let visible_height = event_details.current_visible_height;
             let current_content_string = event_details.current_content();
@@ -1026,19 +975,15 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             } else {
                 content_lines[start_line..end_line].join("\n")
             };
-
-            // Set wrap behavior based on view mode
             let wrap_behavior = match event_details.view_mode {
                 DetailsViewMode::Formatted => Wrap { trim: true },
-                DetailsViewMode::RawXml => Wrap { trim: false }, // Use default wrapping for XML
+                DetailsViewMode::RawXml => Wrap { trim: false },
             };
-
             let content_paragraph = Paragraph::new(visible_content)
-                .wrap(wrap_behavior) // Use conditional wrap behavior
+                .wrap(wrap_behavior)
                 .style(Style::default().fg(Color::White));
-            frame.render_widget(Clear, content_area); // Clear the content area first
-            frame.render_widget(content_paragraph, content_area); // Then render the paragraph
-
+            frame.render_widget(Clear, content_area);
+            frame.render_widget(content_paragraph, content_area);
             if content_lines.len() > visible_height {
                 let scroll_info = format!("[{}/{}]", start_line + 1, content_lines.len());
                 let scroll_rect = Rect::new(
@@ -1071,36 +1016,24 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             } else {
                 Color::Green
             };
-
-            // Create dismiss button text Line
             let dismiss_text = Line::from(vec![
                 Span::styled("[Enter/Esc]", Style::default().fg(Color::White)),
                 Span::raw(" Dismiss "),
             ])
             .alignment(Alignment::Center);
-
-            // Create Title for the bottom border
             let dismiss_title = Title::from(dismiss_text)
                 .position(Position::Bottom)
                 .alignment(Alignment::Center);
-
             let dialog_block = Block::default()
-                .title(status_dialog.title.clone()) // Top title
-                .title(dismiss_title) // Bottom title (Dismiss button)
+                .title(status_dialog.title.clone())
+                .title(dismiss_title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_color));
-
-            // Render the block with titles and borders
             frame.render_widget(dialog_block.clone(), dialog_area);
-
-            // Get inner area *after* defining the block
             let content_area = dialog_block.inner(dialog_area);
-
             let message_paragraph = Paragraph::new(status_dialog.message.clone())
                 .wrap(Wrap { trim: true })
                 .style(Style::default().fg(Color::White));
-
-            // Render message in the full content area
             frame.render_widget(message_paragraph, content_area);
         }
     }
@@ -1239,7 +1172,9 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
                 #[cfg(target_os = "windows")]
                 {
                     if let Some(handle) = app_state.query_handle.take() {
-                        unsafe { let _ = EvtClose(handle); }
+                        unsafe {
+                            let _ = EvtClose(handle);
+                        }
                     }
                     app_state.events.clear();
                     app_state.table_state.select(None);
@@ -1251,18 +1186,23 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
             }
             KeyCode::Char('l') => {
                 app_state.filter_level = app_state.filter_level.next();
-                app_state.log(&format!("Set level filter to: {}", app_state.filter_level.display_name()));
+                app_state.log(&format!(
+                    "Set level filter to: {}",
+                    app_state.filter_level.display_name()
+                ));
                 #[cfg(target_os = "windows")]
                 {
                     if let Some(handle) = app_state.query_handle.take() {
-                        unsafe { let _ = EvtClose(handle); }
+                        unsafe {
+                            let _ = EvtClose(handle);
+                        }
                     }
                     app_state.events.clear();
                     app_state.table_state.select(None);
                     app_state.no_more_events = false;
                     app_state.is_loading = false;
                     app_state.preview_scroll = 0;
-                    app_state.start_or_continue_log_load(true); 
+                    app_state.start_or_continue_log_load(true);
                 }
             }
             _ => {}
