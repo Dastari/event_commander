@@ -46,3 +46,11 @@ Event Commander is a terminal-based event viewer for Windows, written in Rust. I
     ```bash
     ./target/x86_64-pc-windows-gnu/release/event_commander.exe
     ```
+
+### Precompiled Binary (Windows)
+
+For convenience, a precompiled binary for Windows (`x86_64-pc-windows-gnu` target) is available for the latest release:
+
+- **[v1.0.2 Download](https://github.com/Dastari/event_commander/releases/download/v1.0.2/event_commander.exe)**
+
+Simply download the `.exe` file and run it.
