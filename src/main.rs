@@ -206,7 +206,7 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
                 "1" => "Critical".to_string(),
                 "2" => "Error".to_string(),
                 "3" => "Warning".to_string(),
-                "4" => "Information".to_string(),
+                "0" | "4" => "Information".to_string(),
                 "5" => "Verbose".to_string(),
                 _ => format!("Unknown({})", level_raw),
             };
@@ -347,7 +347,8 @@ impl EventDetailsDialog {
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
     fn scroll_down(&mut self, visible_height: usize) {
-        let content_lines = self.current_content().lines().count();
+        let content = self.current_content();
+        let content_lines = content.trim_end().lines().count();
         let max_scroll = content_lines.saturating_sub(visible_height.max(1));
         if self.scroll_position < max_scroll {
             self.scroll_position += 1;
@@ -357,7 +358,8 @@ impl EventDetailsDialog {
         self.scroll_position = self.scroll_position.saturating_sub(10);
     }
     fn page_down(&mut self, visible_height: usize) {
-        let content_lines = self.current_content().lines().count();
+        let content = self.current_content();
+        let content_lines = content.trim_end().lines().count();
         let max_scroll = content_lines.saturating_sub(visible_height.max(1));
         self.scroll_position = self.scroll_position.saturating_add(10).min(max_scroll);
     }
@@ -365,7 +367,8 @@ impl EventDetailsDialog {
         self.scroll_position = 0;
     }
     fn go_to_bottom(&mut self, visible_height: usize) {
-        let content_lines = self.current_content().lines().count();
+        let content = self.current_content();
+        let content_lines = content.trim_end().lines().count();
         self.scroll_position = content_lines.saturating_sub(visible_height.max(1));
     }
 }
@@ -907,11 +910,19 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             } else {
                 content_lines[start_line..end_line].join("\n")
             };
+
+            // Set wrap behavior based on view mode
+            let wrap_behavior = match event_details.view_mode {
+                DetailsViewMode::Formatted => Wrap { trim: true },
+                DetailsViewMode::RawXml => Wrap { trim: false }, // Use default wrapping for XML
+            };
+
             let content_paragraph = Paragraph::new(visible_content)
-                .wrap(Wrap { trim: false })
+                .wrap(wrap_behavior) // Use conditional wrap behavior
                 .style(Style::default().fg(Color::White));
-            frame.render_widget(Clear, content_area);
-            frame.render_widget(content_paragraph, content_area);
+            frame.render_widget(Clear, content_area); // Clear the content area first
+            frame.render_widget(content_paragraph, content_area); // Then render the paragraph
+
             if content_lines.len() > visible_height {
                 let scroll_info = format!("[{}/{}]", start_line + 1, content_lines.len());
                 let scroll_rect = Rect::new(
@@ -944,32 +955,37 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             } else {
                 Color::Green
             };
+
+            // Create dismiss button text Line
+            let dismiss_text = Line::from(vec![
+                Span::styled("[Dismiss (Enter/Esc)]", Style::default().fg(Color::White)),
+            ])
+            .alignment(Alignment::Center);
+
+            // Create Title for the bottom border
+            use ratatui::widgets::block::{Position, Title};
+            let dismiss_title = Title::from(dismiss_text)
+                .position(Position::Bottom)
+                .alignment(Alignment::Center);
+
             let dialog_block = Block::default()
-                .title(status_dialog.title.clone())
+                .title(status_dialog.title.clone()) // Top title
+                .title(dismiss_title) // Bottom title (Dismiss button)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(border_color));
-            let dialog_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(3), Constraint::Length(3)])
-                .margin(1)
-                .split(dialog_area);
-            frame.render_widget(dialog_block, dialog_area);
+
+            // Render the block with titles and borders
+            frame.render_widget(dialog_block.clone(), dialog_area);
+
+            // Get inner area *after* defining the block
+            let content_area = dialog_block.inner(dialog_area);
+
             let message_paragraph = Paragraph::new(status_dialog.message.clone())
                 .wrap(Wrap { trim: true })
                 .style(Style::default().fg(Color::White));
-            frame.render_widget(message_paragraph, dialog_layout[0]);
-            let dismiss_button = Paragraph::new("  [Dismiss (Enter/Esc)]  ")
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(border_color)),
-                )
-                .style(Style::default().fg(Color::White));
-            let button_width = 25;
-            let button_x =
-                dialog_layout[1].x + (dialog_layout[1].width.saturating_sub(button_width)) / 2;
-            let button_area = Rect::new(button_x, dialog_layout[1].y, button_width, 3);
-            frame.render_widget(dismiss_button, button_area);
+
+            // Render message in the full content area
+            frame.render_widget(message_paragraph, content_area);
         }
     }
 }

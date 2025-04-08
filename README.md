@@ -4,6 +4,8 @@
 
 Event Commander is a terminal-based event viewer for Windows, written in Rust. It provides a user experience reminiscent of classic file managers like Norton Commander, allowing users to navigate and view Windows Event Logs efficiently using keyboard controls within a TUI (Text-based User Interface).
 
+![Event Commander Screenshot](screenshot.jpg)
+
 ## Features
 
 - **Log Selection:** Navigate and select from standard Windows Event Logs (Application, System, Security, Setup, ForwardedEvents) in the left panel.
