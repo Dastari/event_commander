@@ -1,0 +1,1 @@
+cargo build --target x86_64-pc-windows-gnu --release && cp target/x86_64-pc-windows-gnu/release/event_commander.exe /mnt/c/temp/

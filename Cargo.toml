@@ -1,0 +1,13 @@
+[package]
+name = "event_commander"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ratatui = { version = "0.26.3", features = ["crossterm"] }
+crossterm = "0.27.0"
+
+windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_System_EventLog", "Win32_System_Threading", "Win32_System_Console"] }
+chrono = "0.4"
