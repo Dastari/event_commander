@@ -2,9 +2,69 @@
 
 ## Overview
 
-Event Commander is a command-line based event viewer for Windows, designed to replicate the core functionality of the Windows Event Viewer within a terminal interface. It aims to provide a user experience reminiscent of classic DOS utilities like Norton Commander or Midnight Commander, utilizing text-based windows, menus, and keyboard navigation.
+Event Commander is a terminal-based event viewer for Windows, written in Rust. It aims to provide a user experience reminiscent of classic file managers like Norton Commander, allowing users to navigate and view Windows Event Logs efficiently using keyboard controls within a TUI (Text-based User Interface).
 
-The entire application will be built using Rust.
+## Current Functionality
+
+*   **Log Selection:** Navigate and select from standard Windows Event Logs (Application, System, Security, Setup, ForwardedEvents) in the left panel.
+*   **Event Listing:** View events from the selected log in a table format (Level, DateTime, Source, Event ID) in the main panel.
+*   **Dynamic Loading:** Events are fetched in batches as you scroll down the event list.
+*   **Event Details:** Press Enter on an event to open a detailed view dialog.
+*   **Multiple Detail Views:** Toggle between a formatted summary and the raw event XML within the details dialog using 'v'.
+*   **XML Pretty Printing:** The raw XML view is automatically pretty-printed for readability.
+*   **Save Event:** Save the full, pretty-printed XML of the selected event to a local file using 's' in the details dialog.
+*   **Preview Pane:** See a preview of the selected event's formatted message at the bottom.
+*   **Keyboard Navigation:** Use arrow keys, PageUp/Down, Home/End, Tab/BackTab, and Enter/Esc for navigation and interaction.
+*   **Logging:** Application status and errors are logged to `event_commander.log`.
+
+## Technology Stack
+
+*   **Language:** Rust
+*   **TUI Library:** `ratatui`
+*   **Terminal Backend & Input:** `crossterm`
+*   **Windows Event Log Access:** `windows-rs` crate (direct Win32 API access)
+*   **XML Parsing (Formatted View):** `minidom`
+*   **XML Pretty Printing (Raw View & Saving):** `quick-xml`
+
+## Building and Running
+
+1.  **Prerequisites:**
+    *   Install Rust and Cargo: [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+    *   Ensure you have the necessary Windows development tools/SDKs installed, as the `windows-rs` crate requires them for linking.
+2.  **Clone the repository:**
+    ```bash
+    git clone <repository_url>
+    cd event-commander
+    ```
+3.  **Build:**
+    ```bash
+    cargo build
+    ```
+    *Note: Building `windows-rs` can take some time, especially the first time.*
+4.  **Run:**
+    ```bash
+    cargo run
+    ```
+    Alternatively, run the compiled executable directly:
+    ```bash
+    ./target/debug/event_commander.exe 
+    ```
+
+## Future Goals / Potential Features
+
+*   Advanced filtering (Level, Source, ID, Date, Keywords).
+*   Text search within event messages.
+*   Configurable display columns.
+*   (Future) Event log clearing/backing up.
+*   (Future) Watching logs for real-time events.
+*   (Future) Support for `.evtx` file loading.
+
+## Interface Style
+
+The UI draws inspiration from Norton Commander / Midnight Commander:
+*   Use panels to display information (logs, events, preview, details).
+*   Employ keyboard shortcuts for commands and navigation.
+*   Use text-based dialogs for details and confirmations.
 
 ## Goals
 
@@ -12,11 +72,6 @@ The entire application will be built using Rust.
 *   Allow users to view, filter, and search events efficiently from the command line.
 *   Offer an intuitive keyboard-driven navigation system.
 *   Present event data clearly within an ASCII-based interface.
-
-## Technology Stack
-
-*   **Language:** Rust
-*   **Build Tool:** Cargo
 
 ## Proposed Libraries & Tools
 
@@ -47,11 +102,4 @@ The entire application will be built using Rust.
 *   Keyboard navigation (arrow keys, page up/down, home/end, function keys for actions).
 *   Configurable display columns.
 *   (Future) Event log clearing/backing up.
-*   (Future) Watching logs for real-time events.
-
-## Interface Style
-
-The UI should draw inspiration from Norton Commander / Midnight Commander:
-*   Use panels to display information (e.g., list of logs, list of events, event details).
-*   Employ menus or function key bars for commands.
-*   Use text-based dialogs for filtering/searching/options. 
+*   (Future) Watching logs for real-time events. 
