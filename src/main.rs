@@ -2,35 +2,45 @@ use chrono::Local;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use minidom::Element;
+use quick_xml::{Reader, Writer, events::Event as XmlEvent};
 use ratatui::{
     prelude::*,
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{
+        Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
+        Wrap,
+    },
 };
+use std::io::Cursor;
 use std::{
     collections::HashMap,
     error::Error,
     fs,
-    io::{self, stdout, Stdout},
+    io::{self, Stdout, stdout},
     time::Duration,
     vec,
 };
-use windows::{
-    core::PCWSTR,
-    Win32::{
-        Foundation::{GetLastError, ERROR_NO_MORE_ITEMS},
-        System::EventLog::{EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml, EVT_HANDLE, EvtQueryChannelPath, EvtQueryReverseDirection},
+use windows::Win32::{
+    Foundation::{ERROR_NO_MORE_ITEMS, GetLastError},
+    System::EventLog::{
+        EvtClose, EvtNext, EvtQuery, EvtQueryChannelPath, EvtQueryReverseDirection, EVT_HANDLE,
+        EvtRender, EvtRenderEventXml,
     },
 };
-use minidom::{Element, NSChoice};
-use quick_xml::{events::Event as XmlEvent, Reader, Writer};
-use std::io::Cursor;
+use windows::core::PCWSTR;
 
 const EVENT_XML_NS: &str = "http://schemas.microsoft.com/win/2004/08/events/event";
 const EVENT_BATCH_SIZE: usize = 100;
-const LOG_NAMES: [&str; 5] = ["Application", "System", "Security", "Setup", "ForwardedEvents"];
+const LOG_NAMES: [&str; 5] = [
+    "Application",
+    "System",
+    "Security",
+    "Setup",
+    "ForwardedEvents",
+];
 
 fn to_wide_string(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -40,7 +50,15 @@ fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
     unsafe {
         let mut buffer_used: u32 = 0;
         let mut property_count: u32 = 0;
-        let _ = EvtRender(None, event_handle, EvtRenderEventXml.0, 0, None, &mut buffer_used, &mut property_count);
+        let _ = EvtRender(
+            None,
+            event_handle,
+            EvtRenderEventXml.0,
+            0,
+            None,
+            &mut buffer_used,
+            &mut property_count,
+        );
         if buffer_used == 0 {
             return None;
         }
@@ -76,7 +94,8 @@ fn find_attribute_value<'a>(xml: &'a str, attribute_name: &str) -> Option<&'a st
 }
 
 fn get_child_text(parent: &Element, child_name: &str) -> String {
-    parent.get_child(child_name, EVENT_XML_NS)
+    parent
+        .get_child(child_name, EVENT_XML_NS)
         .map_or(String::new(), |el| el.text().to_string())
 }
 
@@ -86,13 +105,17 @@ fn get_attr(element: &Element, attr_name: &str) -> Option<String> {
 
 fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
     let mut data_map: HashMap<String, String> = HashMap::new();
-    for data_el in event_data_element.children().filter(|c| c.is("Data", EVENT_XML_NS)) {
+    for data_el in event_data_element
+        .children()
+        .filter(|c| c.is("Data", EVENT_XML_NS))
+    {
         if let Some(name) = data_el.attr("Name") {
             data_map.insert(name.to_string(), data_el.text().to_string());
         }
     }
     let mut result = String::new();
-    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType")) {
+    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType"))
+    {
         result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
     }
     if let Some(event_name) = data_map.get("EventName") {
@@ -192,7 +215,11 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
                 .and_then(|time_el| get_attr(time_el, "SystemTime"))
                 .map(|time_str| {
                     chrono::DateTime::parse_from_rfc3339(&time_str)
-                        .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
+                        .map(|dt| {
+                            dt.with_timezone(&Local)
+                                .format("%Y-%m-%d %H:%M:%S")
+                                .to_string()
+                        })
                         .unwrap_or(time_str)
                 })
                 .unwrap_or_default();
@@ -258,7 +285,12 @@ struct EventDetailsDialog {
 
 impl StatusDialog {
     fn new(title: &str, message: &str, is_error: bool) -> Self {
-        Self { title: title.to_string(), message: message.to_string(), visible: true, is_error }
+        Self {
+            title: title.to_string(),
+            message: message.to_string(),
+            visible: true,
+            is_error,
+        }
     }
     fn dismiss(&mut self) {
         self.visible = false;
@@ -302,12 +334,13 @@ impl EventDetailsDialog {
     fn current_content(&self) -> String {
         match self.view_mode {
             DetailsViewMode::Formatted => self.formatted_content.clone(),
-            DetailsViewMode::RawXml => {
-                match pretty_print_xml(&self.raw_xml) {
-                    Ok(pretty) => pretty,
-                    Err(e) => format!("<Failed to format Raw XML: {}\n--- Original XML ---\n{}", e, self.raw_xml),
-                }
-            }
+            DetailsViewMode::RawXml => match pretty_print_xml(&self.raw_xml) {
+                Ok(pretty) => pretty,
+                Err(e) => format!(
+                    "<Failed to format Raw XML: {}\n--- Original XML ---\n{}",
+                    e, self.raw_xml
+                ),
+            },
         }
     }
     fn scroll_up(&mut self) {
@@ -437,7 +470,10 @@ impl AppState {
         }
         self.is_loading = true;
         if initial_load {
-            self.log(&format!("Starting initial load for log: {}", self.selected_log_name));
+            self.log(&format!(
+                "Starting initial load for log: {}",
+                self.selected_log_name
+            ));
             self.events.clear();
             self.table_state = TableState::default();
             self.no_more_events = false;
@@ -460,13 +496,21 @@ impl AppState {
             let query_str_wide = to_wide_string("*");
             unsafe {
                 let flags = EvtQueryChannelPath.0 | EvtQueryReverseDirection.0;
-                match EvtQuery(None, PCWSTR::from_raw(channel_wide.as_ptr()), PCWSTR::from_raw(query_str_wide.as_ptr()), flags) {
+                match EvtQuery(
+                    None,
+                    PCWSTR::from_raw(channel_wide.as_ptr()),
+                    PCWSTR::from_raw(query_str_wide.as_ptr()),
+                    flags,
+                ) {
                     Ok(handle) => {
                         self.query_handle = Some(handle);
                         self.log("Created new event query handle.");
                     }
                     Err(e) => {
-                        self.show_error("Query Error", &format!("Failed to query log '{}': {}", self.selected_log_name, e));
+                        self.show_error(
+                            "Query Error",
+                            &format!("Failed to query log '{}': {}", self.selected_log_name, e),
+                        );
                         self.is_loading = false;
                         return;
                     }
@@ -479,9 +523,11 @@ impl AppState {
             let mut new_events_fetched = 0;
             unsafe {
                 loop {
-                    let mut events_buffer: Vec<EVT_HANDLE> = vec![EVT_HANDLE::default(); EVENT_BATCH_SIZE];
+                    let mut events_buffer: Vec<EVT_HANDLE> =
+                        vec![EVT_HANDLE::default(); EVENT_BATCH_SIZE];
                     let mut fetched: u32 = 0;
-                    let events_slice: &mut [isize] = std::mem::transmute(events_buffer.as_mut_slice());
+                    let events_slice: &mut [isize] =
+                        std::mem::transmute(events_buffer.as_mut_slice());
                     let next_result = EvtNext(query_handle, events_slice, 0, 0, &mut fetched);
                     if !next_result.is_ok() {
                         let error = GetLastError().0;
@@ -489,7 +535,13 @@ impl AppState {
                             self.log("Reached end of event log.");
                             self.no_more_events = true;
                         } else {
-                            self.show_error("Reading Error", &format!("Error reading event log '{}': WIN32_ERROR({})", self.selected_log_name, error));
+                            self.show_error(
+                                "Reading Error",
+                                &format!(
+                                    "Error reading event log '{}': WIN32_ERROR({})",
+                                    self.selected_log_name, error
+                                ),
+                            );
                         }
                         break;
                     }
@@ -510,7 +562,11 @@ impl AppState {
                 }
             }
             if new_events_fetched > 0 {
-                self.log(&format!("Fetched {} new events (total {}).", new_events_fetched, self.events.len()));
+                self.log(&format!(
+                    "Fetched {} new events (total {}).",
+                    new_events_fetched,
+                    self.events.len()
+                ));
                 if initial_load && !self.events.is_empty() {
                     self.table_state.select(Some(0));
                 }
@@ -560,7 +616,8 @@ impl AppState {
         }
         let page_size = 10;
         let current_selection = self.table_state.selected().unwrap_or(0);
-        let new_selection = (current_selection + page_size).min(self.events.len().saturating_sub(1));
+        let new_selection =
+            (current_selection + page_size).min(self.events.len().saturating_sub(1));
         self.select_event(Some(new_selection));
         let load_threshold = self.events.len().saturating_sub(20);
         if new_selection >= load_threshold {
@@ -574,7 +631,11 @@ impl AppState {
             return;
         }
         let page_size = 10;
-        let i = self.table_state.selected().unwrap_or(0).saturating_sub(page_size);
+        let i = self
+            .table_state
+            .selected()
+            .unwrap_or(0)
+            .saturating_sub(page_size);
         self.select_event(Some(i));
     }
     fn go_to_top(&mut self) {
@@ -628,7 +689,10 @@ impl Drop for AppState {
 }
 
 fn sanitize_filename(filename: &str) -> String {
-    filename.chars().filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.').collect()
+    filename
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .collect()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -673,10 +737,20 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let log_list_block = Block::default()
         .title("Event Viewer (Local)")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs { Color::Cyan } else { Color::White }));
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs {
+            Color::Cyan
+        } else {
+            Color::White
+        }));
     let log_list = List::new(log_items)
         .block(log_list_block)
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(if app_state.focus == PanelFocus::Logs { Color::Blue } else { Color::DarkGray }))
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(
+            if app_state.focus == PanelFocus::Logs {
+                Color::Blue
+            } else {
+                Color::DarkGray
+            },
+        ))
         .highlight_symbol("> ");
     let mut log_list_state = ListState::default();
     log_list_state.select(Some(app_state.selected_log_index));
@@ -687,29 +761,52 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .split(main_layout[1]);
     let events_area = right_layout[0];
     let preview_area = right_layout[1];
-    let event_rows: Vec<Row> = app_state.events.iter().map(|event| {
-        let level_style = match event.level.as_str() {
-            "Warning" => Style::default().fg(Color::Yellow),
-            "Error" | "Critical" => Style::default().fg(Color::Red),
-            _ => Style::default(),
-        };
-        let level_cell = Cell::from(event.level.clone()).style(level_style);
-        Row::new(vec![
-            level_cell,
-            Cell::from(event.datetime.clone()),
-            Cell::from(event.source.clone()),
-            Cell::from(event.id.clone())
-        ])
-    }).collect();
+    let event_rows: Vec<Row> = app_state
+        .events
+        .iter()
+        .map(|event| {
+            let level_style = match event.level.as_str() {
+                "Warning" => Style::default().fg(Color::Yellow),
+                "Error" | "Critical" => Style::default().fg(Color::Red),
+                _ => Style::default(),
+            };
+            let level_cell = Cell::from(event.level.clone()).style(level_style);
+            Row::new(vec![
+                level_cell,
+                Cell::from(event.datetime.clone()),
+                Cell::from(event.source.clone()),
+                Cell::from(event.id.clone()),
+            ])
+        })
+        .collect();
     let header_cells = ["Level", "Date and Time", "Source", "Event ID"]
         .iter()
-        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-    let header = Row::new(header_cells).style(Style::default().bg(Color::DarkGray)).height(1);
-    let widths = [Constraint::Length(11), Constraint::Length(20), Constraint::Percentage(60), Constraint::Length(10)];
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+    let header = Row::new(header_cells)
+        .style(Style::default().bg(Color::DarkGray))
+        .height(1);
+    let widths = [
+        Constraint::Length(11),
+        Constraint::Length(20),
+        Constraint::Percentage(60),
+        Constraint::Length(10),
+    ];
     let event_table_block = Block::default()
         .title(format!("Events: {}", app_state.selected_log_name))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Events { Color::Cyan } else { Color::White }));
+        .border_style(
+            Style::default().fg(if app_state.focus == PanelFocus::Events {
+                Color::Cyan
+            } else {
+                Color::White
+            }),
+        );
     let event_table = Table::new(event_rows, widths)
         .header(header)
         .block(event_table_block)
@@ -720,12 +817,30 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let preview_block = Block::default()
         .title("Event Message Preview")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Preview { Color::Cyan } else { Color::White }));
+        .border_style(
+            Style::default().fg(if app_state.focus == PanelFocus::Preview {
+                Color::Cyan
+            } else {
+                Color::White
+            }),
+        );
     let preview_message = if let Some(selected_index) = app_state.table_state.selected() {
-        app_state.events.get(selected_index).map_or("<Message not available>".to_string(), |event| event.message.clone())
+        app_state
+            .events
+            .get(selected_index)
+            .map_or("<Message not available>".to_string(), |event| {
+                event.message.clone()
+            })
     } else {
         "<No event selected>".to_string()
     };
+
+    // Clamp preview_scroll based on content height and available area
+    let message_lines = preview_message.lines().count() as u16;
+    let available_height = preview_area.height.saturating_sub(2); // Subtract 2 for top/bottom borders
+    let max_scroll = message_lines.saturating_sub(available_height);
+    app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
+
     let preview_paragraph = Paragraph::new(preview_message)
         .block(preview_block)
         .wrap(Wrap { trim: true })
@@ -735,37 +850,63 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         if event_details.visible {
             let dialog_width = 70.min(frame.size().width.saturating_sub(4));
             let dialog_height = 20.min(frame.size().height.saturating_sub(4));
-            let dialog_area = Rect::new((frame.size().width - dialog_width) / 2, (frame.size().height - dialog_height) / 2, dialog_width, dialog_height);
+            let dialog_area = Rect::new(
+                (frame.size().width - dialog_width) / 2,
+                (frame.size().height - dialog_height) / 2,
+                dialog_width,
+                dialog_height,
+            );
             frame.render_widget(Clear, dialog_area);
             let view_mode_suffix = match event_details.view_mode {
                 DetailsViewMode::Formatted => " (Formatted)",
                 DetailsViewMode::RawXml => " (Raw XML)",
             };
             let dialog_title = format!("{}{}", event_details.title, view_mode_suffix);
+
+            // Create the help text Line
+            let help_text_line = Line::from(vec![
+                Span::styled(" [Esc]", Style::default().fg(Color::Gray)),
+                Span::raw(" Dismiss "),
+                Span::styled(" [v]", Style::default().fg(Color::Gray)),
+                Span::raw(" Toggle View "),
+                Span::styled(" [s]", Style::default().fg(Color::Gray)),
+                Span::raw(" Save Event to Disk "),
+            ])
+            .alignment(Alignment::Center);
+
+            // Create a Title for the bottom border
+            use ratatui::widgets::block::{Position, Title};
+            let help_title = Title::from(help_text_line)
+                .position(Position::Bottom)
+                .alignment(Alignment::Center);
+
             let dialog_block = Block::default()
-                .title(dialog_title)
+                .title(dialog_title) // Top title
+                .title(help_title)   // Bottom title (help text)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Blue));
-            let help_text = Line::from(vec![
-                Span::styled(" [Esc]", Style::default().fg(Color::Gray)), Span::raw(" Dismiss "),
-                Span::styled(" [v]", Style::default().fg(Color::Gray)), Span::raw(" Toggle View "),
-                Span::styled(" [s]", Style::default().fg(Color::Gray)), Span::raw(" Save Event to Disk "),
-            ]).alignment(Alignment::Center);
+
             frame.render_widget(dialog_block.clone(), dialog_area);
-            let inner_area = dialog_block.inner(dialog_area);
-            let dialog_layout = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(1)])
-                .split(inner_area);
-            let content_area = dialog_layout[0];
-            let footer_area = dialog_layout[1];
+
+            // Get the inner area *after* defining the block with borders/titles
+            let content_area = dialog_block.inner(dialog_area);
+
+            // Calculate visible height based on the actual content area
             event_details.current_visible_height = (content_area.height as usize).max(1);
             let visible_height = event_details.current_visible_height;
             let current_content_string = event_details.current_content();
             let content_lines: Vec<&str> = current_content_string.lines().collect();
-            let start_line = event_details.scroll_position.min(content_lines.len().saturating_sub(1));
-            let end_line = (start_line + visible_height).min(content_lines.len()).max(start_line);
-            let visible_content = if content_lines.is_empty() { String::new() } else { content_lines[start_line..end_line].join("\n") };
+            let start_line = event_details
+                .scroll_position
+                .min(content_lines.len().saturating_sub(1));
+            let end_line = (start_line + visible_height)
+                .min(content_lines.len())
+                .max(start_line);
+            let visible_content = if content_lines.is_empty() {
+                String::new()
+            } else {
+                content_lines[start_line..end_line].join("\n")
+            };
             let content_paragraph = Paragraph::new(visible_content)
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(Color::White));
@@ -773,21 +914,36 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             frame.render_widget(content_paragraph, content_area);
             if content_lines.len() > visible_height {
                 let scroll_info = format!("[{}/{}]", start_line + 1, content_lines.len());
-                let scroll_rect = Rect::new(content_area.right().saturating_sub(scroll_info.len() as u16 + 1), content_area.y, scroll_info.len() as u16, 1);
-                let scroll_indicator = Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
+                let scroll_rect = Rect::new(
+                    content_area
+                        .right()
+                        .saturating_sub(scroll_info.len() as u16 + 1),
+                    content_area.y,
+                    scroll_info.len() as u16,
+                    1,
+                );
+                let scroll_indicator =
+                    Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
                 frame.render_widget(scroll_indicator, scroll_rect);
             }
-            frame.render_widget(Clear, footer_area);
-            frame.render_widget(help_text, footer_area);
         }
     }
     if let Some(status_dialog) = &app_state.status_dialog {
         if status_dialog.visible {
             let dialog_width = 60.min(frame.size().width - 4);
             let dialog_height = 10.min(frame.size().height - 4);
-            let dialog_area = Rect::new((frame.size().width - dialog_width) / 2, (frame.size().height - dialog_height) / 2, dialog_width, dialog_height);
+            let dialog_area = Rect::new(
+                (frame.size().width - dialog_width) / 2,
+                (frame.size().height - dialog_height) / 2,
+                dialog_width,
+                dialog_height,
+            );
             frame.render_widget(Clear, dialog_area);
-            let border_color = if status_dialog.is_error { Color::Red } else { Color::Green };
+            let border_color = if status_dialog.is_error {
+                Color::Red
+            } else {
+                Color::Green
+            };
             let dialog_block = Block::default()
                 .title(status_dialog.title.clone())
                 .borders(Borders::ALL)
@@ -803,10 +959,15 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
                 .style(Style::default().fg(Color::White));
             frame.render_widget(message_paragraph, dialog_layout[0]);
             let dismiss_button = Paragraph::new("  [Dismiss (Enter/Esc)]  ")
-                .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(border_color)))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(border_color)),
+                )
                 .style(Style::default().fg(Color::White));
             let button_width = 25;
-            let button_x = dialog_layout[1].x + (dialog_layout[1].width.saturating_sub(button_width)) / 2;
+            let button_x =
+                dialog_layout[1].x + (dialog_layout[1].width.saturating_sub(button_width)) / 2;
             let button_area = Rect::new(button_x, dialog_layout[1].y, button_width, 3);
             frame.render_widget(dismiss_button, button_area);
         }
@@ -821,8 +982,14 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
         if dialog.visible {
             let visible_height = dialog.current_visible_height;
             match key.code {
-                KeyCode::Esc => { dialog.dismiss(); key_handled_by_dialog = true; },
-                KeyCode::Char('v') => { dialog.toggle_view(); key_handled_by_dialog = true; },
+                KeyCode::Esc => {
+                    dialog.dismiss();
+                    key_handled_by_dialog = true;
+                }
+                KeyCode::Char('v') => {
+                    dialog.toggle_view();
+                    key_handled_by_dialog = true;
+                }
                 KeyCode::Char('s') => {
                     let filename = format!(
                         "{}-{}-{}-{}.xml",
@@ -832,19 +999,22 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
                         sanitize_filename(&dialog.event_source)
                     );
                     match pretty_print_xml(&dialog.raw_xml) {
-                        Ok(pretty_xml) => {
-                            match fs::write(&filename, &pretty_xml) {
-                                Ok(_) => {
-                                    status_to_show = Some(("Save Successful".to_string(), format!("Event saved to:\\n{}", filename), false));
-                                    dialog.dismiss();
-                                }
-                                Err(e) => {
-                                    let err_msg = format!("Failed to save event to {}: {}", filename, e);
-                                    app_state.log(&err_msg);
-                                    status_to_show = Some(("Save Failed".to_string(), err_msg, true));
-                                }
+                        Ok(pretty_xml) => match fs::write(&filename, &pretty_xml) {
+                            Ok(_) => {
+                                status_to_show = Some((
+                                    "Save Successful".to_string(),
+                                    format!("Event saved to:\\n{}", filename),
+                                    false,
+                                ));
+                                dialog.dismiss();
                             }
-                        }
+                            Err(e) => {
+                                let err_msg =
+                                    format!("Failed to save event to {}: {}", filename, e);
+                                app_state.log(&err_msg);
+                                status_to_show = Some(("Save Failed".to_string(), err_msg, true));
+                            }
+                        },
                         Err(err_msg) => {
                             let log_msg = format!("Failed to format XML for saving: {}", err_msg);
                             app_state.log(&log_msg);
@@ -852,19 +1022,36 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
                         }
                     }
                     key_handled_by_dialog = true;
-                },
-                KeyCode::Up => { dialog.scroll_up(); key_handled_by_dialog = true; },
-                KeyCode::Down => { dialog.scroll_down(visible_height); key_handled_by_dialog = true; },
-                KeyCode::PageUp => { dialog.page_up(); key_handled_by_dialog = true; },
-                KeyCode::PageDown => { dialog.page_down(visible_height); key_handled_by_dialog = true; },
-                KeyCode::Home | KeyCode::Char('g') => { dialog.go_to_top(); key_handled_by_dialog = true; },
-                KeyCode::End | KeyCode::Char('G') => { dialog.go_to_bottom(visible_height); key_handled_by_dialog = true; },
+                }
+                KeyCode::Up => {
+                    dialog.scroll_up();
+                    key_handled_by_dialog = true;
+                }
+                KeyCode::Down => {
+                    dialog.scroll_down(visible_height);
+                    key_handled_by_dialog = true;
+                }
+                KeyCode::PageUp => {
+                    dialog.page_up();
+                    key_handled_by_dialog = true;
+                }
+                KeyCode::PageDown => {
+                    dialog.page_down(visible_height);
+                    key_handled_by_dialog = true;
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    dialog.go_to_top();
+                    key_handled_by_dialog = true;
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    dialog.go_to_bottom(visible_height);
+                    key_handled_by_dialog = true;
+                }
                 _ => {}
             }
         }
     }
     if !key_handled_by_dialog {
-        
         if let Some(dialog) = &mut app_state.status_dialog {
             if dialog.visible {
                 if let KeyCode::Enter | KeyCode::Esc = key.code {
@@ -882,7 +1069,9 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
         }
         key_handled_by_dialog = true;
     }
-    if key_handled_by_dialog { return; }
+    if key_handled_by_dialog {
+        return;
+    }
     match current_focus {
         PanelFocus::Logs => match key.code {
             KeyCode::Char('q') => return,
@@ -936,15 +1125,33 @@ fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(XmlEvent::Start(e)) => writer.write_event(XmlEvent::Start(e)).map_err(|e| format!("XML Write Error (Start): {}", e))?,
-            Ok(XmlEvent::End(e)) => writer.write_event(XmlEvent::End(e)).map_err(|e| format!("XML Write Error (End): {}", e))?,
-            Ok(XmlEvent::Empty(e)) => writer.write_event(XmlEvent::Empty(e)).map_err(|e| format!("XML Write Error (Empty): {}", e))?,
-            Ok(XmlEvent::Text(e)) => writer.write_event(XmlEvent::Text(e)).map_err(|e| format!("XML Write Error (Text): {}", e))?,
-            Ok(XmlEvent::Comment(e)) => writer.write_event(XmlEvent::Comment(e)).map_err(|e| format!("XML Write Error (Comment): {}", e))?,
-            Ok(XmlEvent::CData(e)) => writer.write_event(XmlEvent::CData(e)).map_err(|e| format!("XML Write Error (CData): {}", e))?,
-            Ok(XmlEvent::Decl(e)) => writer.write_event(XmlEvent::Decl(e)).map_err(|e| format!("XML Write Error (Decl): {}", e))?,
-            Ok(XmlEvent::PI(e)) => writer.write_event(XmlEvent::PI(e)).map_err(|e| format!("XML Write Error (PI): {}", e))?,
-            Ok(XmlEvent::DocType(e)) => writer.write_event(XmlEvent::DocType(e)).map_err(|e| format!("XML Write Error (DocType): {}", e))?,
+            Ok(XmlEvent::Start(e)) => writer
+                .write_event(XmlEvent::Start(e))
+                .map_err(|e| format!("XML Write Error (Start): {}", e))?,
+            Ok(XmlEvent::End(e)) => writer
+                .write_event(XmlEvent::End(e))
+                .map_err(|e| format!("XML Write Error (End): {}", e))?,
+            Ok(XmlEvent::Empty(e)) => writer
+                .write_event(XmlEvent::Empty(e))
+                .map_err(|e| format!("XML Write Error (Empty): {}", e))?,
+            Ok(XmlEvent::Text(e)) => writer
+                .write_event(XmlEvent::Text(e))
+                .map_err(|e| format!("XML Write Error (Text): {}", e))?,
+            Ok(XmlEvent::Comment(e)) => writer
+                .write_event(XmlEvent::Comment(e))
+                .map_err(|e| format!("XML Write Error (Comment): {}", e))?,
+            Ok(XmlEvent::CData(e)) => writer
+                .write_event(XmlEvent::CData(e))
+                .map_err(|e| format!("XML Write Error (CData): {}", e))?,
+            Ok(XmlEvent::Decl(e)) => writer
+                .write_event(XmlEvent::Decl(e))
+                .map_err(|e| format!("XML Write Error (Decl): {}", e))?,
+            Ok(XmlEvent::PI(e)) => writer
+                .write_event(XmlEvent::PI(e))
+                .map_err(|e| format!("XML Write Error (PI): {}", e))?,
+            Ok(XmlEvent::DocType(e)) => writer
+                .write_event(XmlEvent::DocType(e))
+                .map_err(|e| format!("XML Write Error (DocType): {}", e))?,
             Ok(XmlEvent::Eof) => break,
             Err(e) => return Err(format!("XML Read Error: {}", e)),
         }

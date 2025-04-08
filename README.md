@@ -2,35 +2,30 @@
 
 ## Overview
 
-Event Commander is a terminal-based event viewer for Windows, written in Rust. It aims to provide a user experience reminiscent of classic file managers like Norton Commander, allowing users to navigate and view Windows Event Logs efficiently using keyboard controls within a TUI (Text-based User Interface).
+Event Commander is a terminal-based event viewer for Windows, written in Rust. It provides a user experience reminiscent of classic file managers like Norton Commander, allowing users to navigate and view Windows Event Logs efficiently using keyboard controls within a TUI (Text-based User Interface).
 
-## Current Functionality
+## Features
 
-*   **Log Selection:** Navigate and select from standard Windows Event Logs (Application, System, Security, Setup, ForwardedEvents) in the left panel.
-*   **Event Listing:** View events from the selected log in a table format (Level, DateTime, Source, Event ID) in the main panel.
-*   **Dynamic Loading:** Events are fetched in batches as you scroll down the event list.
-*   **Event Details:** Press Enter on an event to open a detailed view dialog.
-*   **Multiple Detail Views:** Toggle between a formatted summary and the raw event XML within the details dialog using 'v'.
-*   **XML Pretty Printing:** The raw XML view is automatically pretty-printed for readability.
-*   **Save Event:** Save the full, pretty-printed XML of the selected event to a local file using 's' in the details dialog.
-*   **Preview Pane:** See a preview of the selected event's formatted message at the bottom.
-*   **Keyboard Navigation:** Use arrow keys, PageUp/Down, Home/End, Tab/BackTab, and Enter/Esc for navigation and interaction.
-*   **Logging:** Application status and errors are logged to `event_commander.log`.
-
-## Technology Stack
-
-*   **Language:** Rust
-*   **TUI Library:** `ratatui`
-*   **Terminal Backend & Input:** `crossterm`
-*   **Windows Event Log Access:** `windows-rs` crate (direct Win32 API access)
-*   **XML Parsing (Formatted View):** `minidom`
-*   **XML Pretty Printing (Raw View & Saving):** `quick-xml`
+- **Log Selection:** Navigate and select from standard Windows Event Logs (Application, System, Security, Setup, ForwardedEvents) in the left panel.
+- **Event Listing:** View events from the selected log in a table format (Level, DateTime, Source, Event ID) in the main panel.
+- **Dynamic Loading:** Events are fetched in batches as you scroll down the event list.
+- **Event Details:** Press Enter on an event to open a detailed view dialog.
+- **Multiple Detail Views:** Toggle between a formatted summary and the raw event XML within the details dialog using 'v'.
+- **XML Pretty Printing:** The raw XML view is automatically pretty-printed for readability.
+- **Save Event:** Save the full, pretty-printed XML of the selected event to a local file using 's' in the details dialog.
+- **Preview Pane:** See a preview of the selected event's formatted message at the bottom.
+- **Keyboard Navigation:** Use arrow keys, PageUp/Down, Home/End, Tab/BackTab, and Enter/Esc for navigation and interaction.
+- **Logging:** Application status and errors are logged to `event_commander.log`.
 
 ## Building and Running
 
 1.  **Prerequisites:**
-    *   Install Rust and Cargo: [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
-    *   Ensure you have the necessary Windows development tools/SDKs installed, as the `windows-rs` crate requires them for linking.
+    - Install Rust and Cargo: [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
+    - Install Windows SDK on your Windows system
+    - Install MinGW-w64 toolchain in WSL:
+      ```bash
+      sudo apt-get update && sudo apt-get install -y mingw-w64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      ```
 2.  **Clone the repository:**
     ```bash
     git clone <repository_url>
@@ -38,68 +33,14 @@ Event Commander is a terminal-based event viewer for Windows, written in Rust. I
     ```
 3.  **Build:**
     ```bash
-    cargo build
+    cargo build --target x86_64-pc-windows-gnu --release
     ```
-    *Note: Building `windows-rs` can take some time, especially the first time.*
+    _Note: Building `windows-rs` can take some time, especially the first time._
 4.  **Run:**
     ```bash
-    cargo run
+    cargo run --target x86_64-pc-windows-gnu --release
     ```
     Alternatively, run the compiled executable directly:
     ```bash
-    ./target/debug/event_commander.exe 
+    ./target/x86_64-pc-windows-gnu/release/event_commander.exe
     ```
-
-## Future Goals / Potential Features
-
-*   Advanced filtering (Level, Source, ID, Date, Keywords).
-*   Text search within event messages.
-*   Configurable display columns.
-*   (Future) Event log clearing/backing up.
-*   (Future) Watching logs for real-time events.
-*   (Future) Support for `.evtx` file loading.
-
-## Interface Style
-
-The UI draws inspiration from Norton Commander / Midnight Commander:
-*   Use panels to display information (logs, events, preview, details).
-*   Employ keyboard shortcuts for commands and navigation.
-*   Use text-based dialogs for details and confirmations.
-
-## Goals
-
-*   Provide access to Windows Event Logs (Application, System, Security, Custom Logs, etc.) via a TUI.
-*   Allow users to view, filter, and search events efficiently from the command line.
-*   Offer an intuitive keyboard-driven navigation system.
-*   Present event data clearly within an ASCII-based interface.
-
-## Proposed Libraries & Tools
-
-*   **Text-based User Interface (TUI):**
-    *   **`ratatui`**: A modern and actively maintained fork of `tui-rs`. It provides widgets and tools for building complex terminal UIs. It works well with various backends.
-    *   **`crossterm`**: Often used as a backend for `ratatui`. Handles terminal manipulation like raw mode, cursor positioning, colors, and input events (keyboard/mouse) across different platforms (though we are primarily targeting Windows).
-    *   *Alternatives:* `cursive` offers a higher-level, view-based approach but might be less flexible for a commander-style UI.
-
-*   **Windows Event Log Access:**
-    *   **`windows-rs`**: Official Rust bindings for Windows APIs generated by Microsoft. Provides direct access to the necessary Win32 functions for event logging (e.g., within `Win32::System::EventLog`). This offers the most control but requires interacting with lower-level C-style APIs.
-    *   **`winevt_rs`**: A higher-level wrapper specifically for the Windows Event Log API, built on top of `windows-rs`. This might simplify development by providing safer abstractions over the raw Win32 functions.
-
-*   **Keyboard Input:**
-    *   Handled primarily by the TUI library backend (e.g., `crossterm` when used with `ratatui`). It captures key presses and translates them into events the application can react to.
-
-## Potential Features
-
-*   List available event logs.
-*   Display events in a filterable list view (e.g., main panel).
-*   Show detailed information for a selected event (e.g., in a separate panel or dialog).
-*   Filter events by:
-    *   Log Level (Information, Warning, Error, etc.)
-    *   Source
-    *   Event ID
-    *   Date/Time Range
-    *   Keywords
-*   Text search within event messages.
-*   Keyboard navigation (arrow keys, page up/down, home/end, function keys for actions).
-*   Configurable display columns.
-*   (Future) Event log clearing/backing up.
-*   (Future) Watching logs for real-time events. 
