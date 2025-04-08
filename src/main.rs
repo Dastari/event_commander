@@ -68,9 +68,14 @@ fn find_attribute_value<'a>(xml: &'a str, attribute_name: &str) -> Option<&'a st
 }
 
 fn parse_event_xml(xml: &str) -> DisplayEvent {
-    let source = find_attribute_value(xml, "Provider Name")
+    let mut source = find_attribute_value(xml, "Provider Name")
         .map(|s| s.to_string())
         .unwrap_or_else(|| "<unknown provider>".to_string());
+
+    // Remove "Microsoft-Windows-" prefix if present
+    if source.starts_with("Microsoft-Windows-") {
+        source = source.trim_start_matches("Microsoft-Windows-").to_string();
+    }
 
     let id = if let Some(start) = xml.find("<EventID>") {
         let sub = &xml[start + "<EventID>".len()..];
@@ -204,6 +209,10 @@ struct AppState {
     error_dialog: Option<ErrorDialog>,
     event_details_dialog: Option<EventDetailsDialog>,
     log_file: Option<std::fs::File>,
+    #[cfg(target_os = "windows")]
+    query_handle: Option<EVT_HANDLE>,
+    is_loading: bool,
+    no_more_events: bool,
 }
 
 impl AppState {
@@ -218,6 +227,10 @@ impl AppState {
             error_dialog: None,
             event_details_dialog: None,
             log_file,
+            #[cfg(target_os = "windows")]
+            query_handle: None,
+            is_loading: false,
+            no_more_events: false,
         }
     }
     fn log(&mut self, message: &str) {
@@ -243,66 +256,124 @@ impl AppState {
         }
     }
     #[cfg(target_os = "windows")]
-    fn load_events_for_selected_log(&mut self) {
-        self.selected_log_name = LOG_NAMES.get(self.selected_log_index).map(|s| s.to_string()).unwrap_or_else(|| "".to_string());
-        self.events.clear();
-        self.table_state = TableState::default();
-        if self.selected_log_name.is_empty() {
-            self.show_error("Loading Error", "No log name selected.");
+    fn start_or_continue_log_load(&mut self, initial_load: bool) {
+        if self.is_loading {
+            self.log("Load requested but already in progress.");
             return;
         }
-        self.log(&format!("Loading events from {}", self.selected_log_name));
-        let channel_wide = to_wide_string(&self.selected_log_name);
-        let query_str_wide = to_wide_string("*");
-        unsafe {
-            let flags = EvtQueryChannelPath.0 | EvtQueryReverseDirection.0;
-            let query_handle = EvtQuery(None, PCWSTR::from_raw(channel_wide.as_ptr()), PCWSTR::from_raw(query_str_wide.as_ptr()), flags);
-            if query_handle.is_err() {
-                self.show_error("Query Error", &format!("Failed to query log '{}'", self.selected_log_name));
+
+        if !initial_load && self.no_more_events {
+            self.log("Load requested but no more events to fetch.");
+            return;
+        }
+
+        self.is_loading = true;
+
+        // Initial load setup
+        if initial_load {
+            self.log(&format!("Starting initial load for log: {}", self.selected_log_name));
+            // Clear previous state
+            self.events.clear();
+            self.table_state = TableState::default();
+            self.no_more_events = false;
+
+            // Close existing query handle if any
+            if let Some(handle) = self.query_handle.take() {
+                unsafe {
+                    let _ = EvtClose(handle);
+                }
+                self.log("Closed previous query handle.");
+            }
+
+            // Get selected log name
+            self.selected_log_name = LOG_NAMES.get(self.selected_log_index).map(|s| s.to_string()).unwrap_or_else(|| "".to_string());
+            if self.selected_log_name.is_empty() {
+                self.show_error("Loading Error", "No log name selected.");
+                self.is_loading = false;
                 return;
             }
-            let query_handle = query_handle.unwrap();
-            loop {
-                let mut events: Vec<EVT_HANDLE> = vec![EVT_HANDLE::default(); EVENT_BATCH_SIZE];
-                let mut fetched: u32 = 0;
-                let next_result = unsafe {
-                    let events_slice: &mut [isize] = std::mem::transmute(events.as_mut_slice());
-                    EvtNext(query_handle, events_slice, 0, 0, &mut fetched)
-                };
-                if !next_result.is_ok() {
-                    let error = GetLastError().0;
-                    if error == ERROR_NO_MORE_ITEMS.0 {
-                        break;
-                    } else {
-                        self.show_error("Reading Error", &format!("Error reading event log '{}': WIN32_ERROR({})", self.selected_log_name, error));
-                        break;
+
+            // Create new query
+            let channel_wide = to_wide_string(&self.selected_log_name);
+            let query_str_wide = to_wide_string("*");
+            unsafe {
+                let flags = EvtQueryChannelPath.0 | EvtQueryReverseDirection.0;
+                match EvtQuery(None, PCWSTR::from_raw(channel_wide.as_ptr()), PCWSTR::from_raw(query_str_wide.as_ptr()), flags) {
+                    Ok(handle) => {
+                        self.query_handle = Some(handle);
+                        self.log("Created new event query handle.");
+                    }
+                    Err(e) => {
+                        self.show_error("Query Error", &format!("Failed to query log '{}': {}", self.selected_log_name, e));
+                        self.is_loading = false;
+                        return;
                     }
                 }
-                for i in 0..(fetched as usize) {
-                    let event_handle = events[i];
-                    if let Some(xml) = render_event_xml(event_handle) {
-                        let display_event = parse_event_xml(&xml);
-                        self.events.push(display_event);
+            }
+        } else {
+            self.log("Continuing log load...");
+        }
+
+        // Fetch next batch (common to initial and subsequent loads)
+        if let Some(query_handle) = self.query_handle {
+            let initial_event_count = self.events.len();
+            let mut new_events_fetched = 0;
+            unsafe {
+                loop {
+                    let mut events_buffer: Vec<EVT_HANDLE> = vec![EVT_HANDLE::default(); EVENT_BATCH_SIZE];
+                    let mut fetched: u32 = 0;
+                    let next_result = unsafe {
+                        let events_slice: &mut [isize] = std::mem::transmute(events_buffer.as_mut_slice());
+                        EvtNext(query_handle, events_slice, 0, 0, &mut fetched)
+                    };
+
+                    if !next_result.is_ok() {
+                        let error = GetLastError().0;
+                        if error == ERROR_NO_MORE_ITEMS.0 {
+                            self.log("Reached end of event log.");
+                            self.no_more_events = true;
+                        } else {
+                            self.show_error("Reading Error", &format!("Error reading event log '{}': WIN32_ERROR({})", self.selected_log_name, error));
+                        }
+                        break; // Exit loop on error or no more items
                     }
-                    let _ = EvtClose(event_handle);
-                    if self.events.len() >= EVENT_BATCH_SIZE {
+
+                    if fetched == 0 {
+                        self.log("EvtNext returned 0 events, assuming end.");
+                        self.no_more_events = true;
                         break;
                     }
-                }
-                if self.events.len() >= EVENT_BATCH_SIZE || fetched == 0 {
+
+                    for i in 0..(fetched as usize) {
+                        let event_handle = events_buffer[i];
+                        if let Some(xml) = render_event_xml(event_handle) {
+                            let display_event = parse_event_xml(&xml);
+                            self.events.push(display_event);
+                            new_events_fetched += 1;
+                        }
+                        let _ = EvtClose(event_handle);
+                    }
+
+                    // For now, we only fetch one batch at a time per trigger
                     break;
                 }
             }
-            let _ = EvtClose(query_handle);
+
+            if new_events_fetched > 0 {
+                self.log(&format!("Fetched {} new events (total {}).", new_events_fetched, self.events.len()));
+                if initial_load && !self.events.is_empty() {
+                    self.table_state.select(Some(0));
+                }
+            } else if initial_load {
+                self.table_state.select(None);
+                // Potentially show a different message than error if log is just empty
+                self.log(&format!("No events found in {}", self.selected_log_name));
+            }
+        } else {
+            self.log("Attempted to load more events, but no query handle exists.");
         }
 
-        if !self.events.is_empty() {
-            self.table_state.select(Some(0));
-            self.log(&format!("Loaded {} events from {}", self.events.len(), self.selected_log_name));
-        } else {
-            self.table_state.select(None);
-            self.show_error("Loading Error", &format!("No events found in {}", self.selected_log_name));
-        }
+        self.is_loading = false;
     }
     fn next_log(&mut self) {
         if self.selected_log_index < LOG_NAMES.len() - 1 {
@@ -317,17 +388,20 @@ impl AppState {
             self.table_state.select(None);
             return;
         }
-        let i = match self.table_state.selected() {
-            Some(i) => {
-                if i >= self.events.len().saturating_sub(1) {
-                    i
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
+        let current_selection = self.table_state.selected().unwrap_or(0);
+        let new_selection = if current_selection >= self.events.len().saturating_sub(1) {
+            current_selection // Stay at the bottom
+        } else {
+            current_selection + 1
         };
-        self.table_state.select(Some(i));
+        self.table_state.select(Some(new_selection));
+
+        // Trigger load if near the end (e.g., within 20 rows)
+        let load_threshold = self.events.len().saturating_sub(20);
+        if new_selection >= load_threshold {
+            #[cfg(target_os = "windows")]
+            self.start_or_continue_log_load(false);
+        }
     }
     fn scroll_up(&mut self) {
         if self.events.is_empty() {
@@ -346,11 +420,16 @@ impl AppState {
             return;
         }
         let page_size = 10;
-        let i = match self.table_state.selected() {
-            Some(i) => (i + page_size).min(self.events.len().saturating_sub(1)),
-            None => 0,
-        };
-        self.table_state.select(Some(i));
+        let current_selection = self.table_state.selected().unwrap_or(0);
+        let new_selection = (current_selection + page_size).min(self.events.len().saturating_sub(1));
+        self.table_state.select(Some(new_selection));
+
+        // Trigger load if near the end
+        let load_threshold = self.events.len().saturating_sub(20);
+        if new_selection >= load_threshold {
+            #[cfg(target_os = "windows")]
+            self.start_or_continue_log_load(false);
+        }
     }
     fn page_up(&mut self) {
         if self.events.is_empty() {
@@ -369,6 +448,19 @@ impl AppState {
             PanelFocus::Logs => PanelFocus::Events,
             PanelFocus::Events => PanelFocus::Logs,
         };
+    }
+}
+
+// Implement Drop to ensure the query handle is closed
+#[cfg(target_os = "windows")]
+impl Drop for AppState {
+    fn drop(&mut self) {
+        if let Some(handle) = self.query_handle.take() {
+            unsafe {
+                let _ = EvtClose(handle);
+            }
+            self.log("Closed active event query handle.");
+        }
     }
 }
 
@@ -408,10 +500,10 @@ fn restore_terminal() -> io::Result<()> {
 fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let main_layout = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .constraints([Constraint::Length(25), Constraint::Min(0)])
         .split(frame.size());
     let log_items: Vec<ListItem> = LOG_NAMES.iter().map(|&name| ListItem::new(name)).collect();
-    let log_list_block = Block::default().title("Windows Logs").borders(Borders::ALL).border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs { Color::Cyan } else { Color::White }));
+    let log_list_block = Block::default().title("Event Viewer (Local)").borders(Borders::ALL).border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs { Color::Cyan } else { Color::White }));
     let log_list = List::new(log_items)
         .block(log_list_block)
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(if app_state.focus == PanelFocus::Logs { Color::Blue } else { Color::DarkGray }))
@@ -419,11 +511,34 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let mut log_list_state = ListState::default();
     log_list_state.select(Some(app_state.selected_log_index));
     frame.render_stateful_widget(log_list, main_layout[0], &mut log_list_state);
-    let event_rows: Vec<Row> = app_state.events.iter().map(|event| Row::new(vec![Cell::from(event.level.clone()), Cell::from(event.datetime.clone()), Cell::from(event.source.clone()), Cell::from(event.id.clone())])).collect();
-    let header_cells = ["Level", "Date and Time", "Source", "Event ID"].iter().map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    let event_rows: Vec<Row> = app_state.events.iter().map(|event| {
+        let level_style = match event.level.as_str() {
+            "Warning" => Style::default().fg(Color::Yellow),
+            "Error" | "Critical" => Style::default().fg(Color::Red),
+            _ => Style::default(),
+        };
+        let level_cell = Cell::from(event.level.clone()).style(level_style);
+        Row::new(vec![
+            level_cell,
+            Cell::from(event.datetime.clone()),
+            Cell::from(event.source.clone()),
+            Cell::from(event.id.clone())
+        ])
+    }).collect();
+    let header_cells = ["Level", "Date and Time", "Source", "Event ID"]
+        .iter()
+        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
     let header = Row::new(header_cells).style(Style::default().bg(Color::DarkGray)).height(1).bottom_margin(0);
-    let widths = [Constraint::Length(10), Constraint::Length(20), Constraint::Percentage(60), Constraint::Length(10)];
-    let event_table_block = Block::default().title(format!("Events: {}", app_state.selected_log_name)).borders(Borders::ALL).border_style(Style::default().fg(if app_state.focus == PanelFocus::Events { Color::Cyan } else { Color::White }));
+    let widths = [
+        Constraint::Length(11),
+        Constraint::Length(20),
+        Constraint::Percentage(60),
+        Constraint::Length(10)
+    ];
+    let event_table_block = Block::default()
+        .title(format!("Events: {}", app_state.selected_log_name))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Events { Color::Cyan } else { Color::White }));
     let event_table = Table::new(event_rows, widths)
         .header(header)
         .block(event_table_block)
@@ -520,16 +635,15 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
             KeyCode::Up => app_state.previous_log(),
             KeyCode::Down => app_state.next_log(),
             KeyCode::Right | KeyCode::Tab => {
-                let current_log_name = LOG_NAMES.get(app_state.selected_log_index).map(|s| s.to_string()).unwrap_or_default();
-                if app_state.events.is_empty() || current_log_name != app_state.selected_log_name {
-                    #[cfg(target_os = "windows")]
-                    app_state.load_events_for_selected_log();
-                }
+                // Trigger initial load when switching focus to Events
+                #[cfg(target_os = "windows")]
+                app_state.start_or_continue_log_load(true);
                 app_state.switch_focus();
             }
             KeyCode::Enter => {
+                // Trigger initial load when selecting a log
                 #[cfg(target_os = "windows")]
-                app_state.load_events_for_selected_log();
+                app_state.start_or_continue_log_load(true);
                 app_state.switch_focus();
             }
             _ => {}
@@ -537,13 +651,11 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
         PanelFocus::Events => match key.code {
             KeyCode::Char('q') => return,
             KeyCode::Up => app_state.scroll_up(),
-            KeyCode::Down => app_state.scroll_down(),
+            KeyCode::Down => app_state.scroll_down(), // Will now potentially trigger load
             KeyCode::PageUp => app_state.page_up(),
-            KeyCode::PageDown => app_state.page_down(),
+            KeyCode::PageDown => app_state.page_down(), // Will now potentially trigger load
             KeyCode::Enter => app_state.show_event_details(),
-            KeyCode::Left => app_state.switch_focus(),
-            KeyCode::BackTab => app_state.switch_focus(),
-            KeyCode::Tab => app_state.switch_focus(),
+            KeyCode::Left | KeyCode::BackTab | KeyCode::Tab => app_state.switch_focus(),
             _ => {}
         },
     }
