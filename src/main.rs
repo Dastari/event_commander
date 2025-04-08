@@ -6,6 +6,7 @@ use crossterm::{
 };
 use ratatui::{
     prelude::*,
+    text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap},
 };
 use std::{
@@ -19,6 +20,9 @@ use windows::{
     Win32::Foundation::{GetLastError, ERROR_NO_MORE_ITEMS},
     Win32::System::EventLog::{EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml, EVT_HANDLE, EvtQueryChannelPath, EvtQueryReverseDirection},
 };
+extern crate minidom;
+use minidom::Element;
+use std::collections::HashMap;
 
 const EVENT_BATCH_SIZE: usize = 100;
 const LOG_NAMES: [&str; 5] = [
@@ -67,68 +71,150 @@ fn find_attribute_value<'a>(xml: &'a str, attribute_name: &str) -> Option<&'a st
     None
 }
 
-fn parse_event_xml(xml: &str) -> DisplayEvent {
-    let mut source = find_attribute_value(xml, "Provider Name")
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "<unknown provider>".to_string());
+// Function to get child element text or default
+fn get_child_text(parent: &Element, child_name: &str) -> String {
+    parent.get_child(child_name, parent.ns())
+        .map_or(String::new(), |el| el.text().to_string())
+}
 
-    // Remove "Microsoft-Windows-" prefix if present
-    if source.starts_with("Microsoft-Windows-") {
-        source = source.trim_start_matches("Microsoft-Windows-").to_string();
+// Function to get attribute value or default
+fn get_attr(element: &Element, attr_name: &str) -> Option<String> {
+    element.attr(attr_name).map(|s| s.to_string())
+}
+
+// --- Specific Formatter for WER 1001 using minidom --- 
+fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
+    let mut data_map: HashMap<String, String> = HashMap::new();
+
+    // Iterate through <Data> child elements
+    for data_el in event_data_element.children().filter(|c| c.is("Data", event_data_element.ns())) {
+        if let Some(name) = data_el.attr("Name") {
+            data_map.insert(name.to_string(), data_el.text().to_string());
+        }
     }
 
-    // Extract EventID from within the System block to handle attributes
-    let id = extract_tag_content(xml, "System")
-        .and_then(|system_xml| extract_tag_content(system_xml, "EventID"))
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "0".to_string());
+    // Build the formatted string (same logic as before, but using the map)
+    let mut result = String::new();
+    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType")) {
+        result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
+    }
+    if let Some(event_name) = data_map.get("EventName") { result.push_str(&format!("Event Name: {}\n", event_name)); }
+    if let Some(response) = data_map.get("Response") { result.push_str(&format!("Response: {}\n", response)); }
+    if let Some(cab_id) = data_map.get("CabId") { result.push_str(&format!("Cab Id: {}\n", cab_id)); }
 
-    let level_raw = if let Some(start) = xml.find("<Level>") {
-        let sub = &xml[start + "<Level>".len()..];
-        if let Some(end) = sub.find("</Level>") {
-            sub[..end].trim().to_string()
-        } else {
-            "0".to_string()
+    result.push_str("\nProblem signature:\n");
+    for i in 1..=10 {
+        let p_key = format!("P{}", i);
+        if let Some(val) = data_map.get(&p_key) {
+            result.push_str(&format!("P{}: {}\n", i, val));
         }
-    } else {
-        "0".to_string()
-    };
-    let level = match level_raw.as_str() {
-        "1" => "Critical".to_string(),
-        "2" => "Error".to_string(),
-        "3" => "Warning".to_string(),
-        "4" => "Information".to_string(),
-        "5" => "Verbose".to_string(),
-        other => format!("Unknown({})", other),
-    };
+    }
 
-    let datetime = find_attribute_value(xml, "TimeCreated SystemTime")
-        .map(|time_str| {
-            match chrono::DateTime::parse_from_rfc3339(time_str) {
-                Ok(dt) => dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string(),
-                Err(_) => time_str.to_string(), // Fallback to raw string if parsing fails
+    if let Some(attached_files) = data_map.get("AttachedFiles") {
+        result.push_str("\nAttached files:\n");
+        for file in attached_files.lines() {
+            result.push_str(file.trim());
+            result.push('\n');
+        }
+    }
+
+     if let Some(store_path) = data_map.get("StorePath") {
+        result.push_str("\nThese files may be available here:\n");
+        result.push_str(store_path.trim());
+        result.push('\n');
+    }
+
+    if let Some(analysis_symbol) = data_map.get("AnalysisSymbol") { result.push_str(&format!("\nAnalysis symbol: {}\n", analysis_symbol)); }
+    if let Some(rechecking) = data_map.get("Rechecking") { result.push_str(&format!("Rechecking for solution: {}\n", rechecking)); }
+    if let Some(report_id) = data_map.get("ReportId") { result.push_str(&format!("Report Id: {}\n", report_id)); }
+    if let Some(report_status) = data_map.get("ReportStatus") { result.push_str(&format!("Report Status: {}\n", report_status)); }
+    if let Some(hashed_bucket) = data_map.get("HashedBucket") { result.push_str(&format!("Hashed bucket: {}\n", hashed_bucket)); }
+    if let Some(cab_guid) = data_map.get("CabGuid") { result.push_str(&format!("Cab Guid: {}\n", cab_guid)); }
+
+    result.trim_end().to_string()
+}
+
+// --- Fallback Formatter using minidom --- 
+fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
+    event_data_element.children()
+        .filter(|c| c.is("Data", event_data_element.ns()))
+        .map(|data_el| {
+            let name = data_el.attr("Name").unwrap_or("Data");
+            let value = data_el.text();
+            if value.is_empty() {
+                format!("  {}", name)
+            } else {
+                format!("  {}: {}", name, value)
             }
         })
-        .unwrap_or_else(|| "".to_string());
+        .collect::<Vec<String>>()
+        .join("\n")
+}
 
-    // Extract message based on event type or fallback
-    let message = if let Some(event_data_xml) = extract_tag_content(xml, "EventData") {
-        if source == "Windows Error Reporting" && id == "1001" {
-            format_wer_event_data(event_data_xml)
-        } else {
-            // Fallback: Format as key-value pairs
-            format_simple_xml_section(event_data_xml)
+// --- Main Parsing Function --- 
+fn parse_event_xml(xml: &str) -> DisplayEvent {
+    // Attempt to parse the XML
+    let root: Result<Element, _> = xml.parse();
+
+    // Default values
+    let mut source = "<Parse Error>".to_string();
+    let mut id = "0".to_string();
+    let mut level = "Unknown".to_string();
+    let mut datetime = "".to_string();
+    let mut message = "<Parse Error>".to_string();
+
+    if let Ok(root) = root {
+        // Find the <System> element (required)
+        if let Some(system) = root.get_child("System", root.ns()) {
+            // Extract Provider Name from attribute
+            source = system.get_child("Provider", root.ns())
+                        .and_then(|prov| get_attr(prov, "Name"))
+                        .unwrap_or_else(|| "<Unknown Provider>".to_string());
+            if source.starts_with("Microsoft-Windows-") {
+                source = source.trim_start_matches("Microsoft-Windows-").to_string();
+            }
+
+            id = get_child_text(system, "EventID");
+            let level_raw = get_child_text(system, "Level");
+            level = match level_raw.as_str() {
+                "1" => "Critical".to_string(),
+                "2" => "Error".to_string(),
+                "3" => "Warning".to_string(),
+                "4" => "Information".to_string(),
+                "5" => "Verbose".to_string(),
+                 _ => format!("Unknown({})", level_raw),
+            };
+
+            datetime = system.get_child("TimeCreated", root.ns())
+                          .and_then(|time_el| get_attr(time_el, "SystemTime"))
+                          .map(|time_str| {
+                              match chrono::DateTime::parse_from_rfc3339(&time_str) {
+                                  Ok(dt) => dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string(),
+                                  Err(_) => time_str.to_string(),
+                              }
+                          })
+                          .unwrap_or_default();
         }
-    } else {
-        "<No EventData found>".to_string()
-    };
+
+        // Find <EventData> (optional) and format message
+        if let Some(event_data) = root.get_child("EventData", root.ns()) {
+             message = if source == "Windows Error Reporting" && id == "1001" {
+                format_wer_event_data_minidom(event_data)
+            } else {
+                format_generic_event_data_minidom(event_data)
+            };
+        } else {
+            message = "<No EventData found>".to_string();
+        }
+
+    } // else: keep default error values
 
     DisplayEvent {
         level,
         datetime,
         source,
         id,
-        message, // Use the formatted message
+        message,
         raw_data: xml.to_string(),
     }
 }
@@ -150,10 +236,18 @@ struct ErrorDialog {
     visible: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DetailsViewMode {
+    Formatted,
+    RawXml,
+}
+
 #[derive(Debug, Clone)]
 struct EventDetailsDialog {
     title: String,
-    content: String,
+    formatted_content: String,
+    raw_xml: String,
+    view_mode: DetailsViewMode,
     visible: bool,
     scroll_position: usize,
 }
@@ -172,10 +266,12 @@ impl ErrorDialog {
 }
 
 impl EventDetailsDialog {
-    fn new(title: &str, content: &str) -> Self {
+    fn new(title: &str, formatted_content: &str, raw_xml: &str) -> Self {
         EventDetailsDialog {
             title: title.to_string(),
-            content: content.to_string(),
+            formatted_content: formatted_content.to_string(),
+            raw_xml: raw_xml.to_string(),
+            view_mode: DetailsViewMode::Formatted,
             visible: true,
             scroll_position: 0,
         }
@@ -183,12 +279,25 @@ impl EventDetailsDialog {
     fn dismiss(&mut self) {
         self.visible = false;
     }
+    fn toggle_view(&mut self) {
+        self.view_mode = match self.view_mode {
+            DetailsViewMode::Formatted => DetailsViewMode::RawXml,
+            DetailsViewMode::RawXml => DetailsViewMode::Formatted,
+        };
+        self.scroll_position = 0;
+    }
+    fn current_content(&self) -> &str {
+        match self.view_mode {
+            DetailsViewMode::Formatted => &self.formatted_content,
+            DetailsViewMode::RawXml => &self.raw_xml,
+        }
+    }
     fn scroll_up(&mut self) {
         self.scroll_position = self.scroll_position.saturating_sub(1);
     }
     fn scroll_down(&mut self, max_lines: usize) {
-        let content_lines = self.content.lines().count();
-        if content_lines > max_lines && self.scroll_position < content_lines - max_lines {
+        let content_lines = self.current_content().lines().count();
+        if content_lines > max_lines && self.scroll_position < content_lines.saturating_sub(max_lines) {
             self.scroll_position += 1;
         }
     }
@@ -196,10 +305,19 @@ impl EventDetailsDialog {
         self.scroll_position = self.scroll_position.saturating_sub(10);
     }
     fn page_down(&mut self, max_lines: usize) {
-        let content_lines = self.content.lines().count();
+        let content_lines = self.current_content().lines().count();
         if content_lines > max_lines {
-            self.scroll_position = (self.scroll_position + 10).min(content_lines - max_lines);
+            self.scroll_position = (self.scroll_position + 10).min(content_lines.saturating_sub(max_lines));
+        } else {
+            self.scroll_position = 0;
         }
+    }
+    fn go_to_top(&mut self) {
+        self.scroll_position = 0;
+    }
+    fn go_to_bottom(&mut self, max_lines: usize) {
+        let content_lines = self.current_content().lines().count();
+        self.scroll_position = content_lines.saturating_sub(max_lines);
     }
 }
 
@@ -263,7 +381,7 @@ impl AppState {
             if let Some(event) = self.events.get(selected) {
                 let title = format!("Event Details: {} ({})", event.source, event.id);
 
-                // Attempt to parse and format the XML nicely
+                // Generate formatted content (include basic info first)
                 let mut formatted_content = String::new();
                 formatted_content.push_str(&format!(
                     "Level:       {}
@@ -272,27 +390,20 @@ Source:      {}
 Event ID:    {}\n",
                     event.level, event.datetime, event.source, event.id
                 ));
+                // Add the formatted message part (previously generated in parse_event_xml)
+                formatted_content.push_str("\n--- Message ---\n");
+                formatted_content.push_str(&event.message); 
+                formatted_content.push('\n');
 
-                if let Some(system_xml) = extract_tag_content(&event.raw_data, "System") {
-                    formatted_content.push_str("\n--- System ---\n");
-                    formatted_content.push_str(&format_simple_xml_section(system_xml));
-                    formatted_content.push('\n');
-                }
+                // Optionally add more structured data if needed in the future
+                // Like System/EventData parsed key-value pairs
 
-                if let Some(event_data_xml) = extract_tag_content(&event.raw_data, "EventData") {
-                    formatted_content.push_str("\n--- Event Data ---\n");
-                    formatted_content.push_str(&format_simple_xml_section(event_data_xml));
-                    formatted_content.push('\n');
-                }
-
-                // Fallback or append remaining raw data if needed (optional)
-                // if formatted_content.len() < 100 { // Arbitrary threshold
-                //     formatted_content.push_str("\n--- Raw XML ---\n");
-                //     formatted_content.push_str(&event.raw_data);
-                // }
-
-                self.event_details_dialog = Some(EventDetailsDialog::new(&title, &formatted_content));
-                self.log(&format!("Showing formatted details for event ID {}", event.id));
+                self.event_details_dialog = Some(EventDetailsDialog::new(
+                    &title,
+                    &formatted_content,
+                    &event.raw_data, // Pass raw XML as well
+                ));
+                self.log(&format!("Showing details for event ID {}", event.id));
             }
         }
     }
@@ -428,11 +539,7 @@ Event ID:    {}\n",
             return;
         }
         let current_selection = self.table_state.selected().unwrap_or(0);
-        let new_selection = if current_selection >= self.events.len().saturating_sub(1) {
-            current_selection
-        } else {
-            current_selection + 1
-        };
+        let new_selection = (current_selection + 1).min(self.events.len().saturating_sub(1));
         self.select_event(Some(new_selection));
 
         let load_threshold = self.events.len().saturating_sub(20);
@@ -446,10 +553,7 @@ Event ID:    {}\n",
             self.select_event(None);
             return;
         }
-        let i = match self.table_state.selected() {
-            Some(i) => i.saturating_sub(1),
-            None => 0,
-        };
+        let i = self.table_state.selected().unwrap_or(0).saturating_sub(1);
         self.select_event(Some(i));
     }
     fn page_down(&mut self) {
@@ -474,11 +578,22 @@ Event ID:    {}\n",
             return;
         }
         let page_size = 10;
-        let i = match self.table_state.selected() {
-            Some(i) => i.saturating_sub(page_size),
-            None => 0,
-        };
+        let i = self.table_state.selected().unwrap_or(0).saturating_sub(page_size);
         self.select_event(Some(i));
+    }
+    fn go_to_top(&mut self) {
+        if !self.events.is_empty() {
+            self.select_event(Some(0));
+        }
+    }
+    fn go_to_bottom(&mut self) {
+        if !self.events.is_empty() {
+            let last_index = self.events.len().saturating_sub(1);
+            self.select_event(Some(last_index));
+            // Trigger load if we went to the very bottom
+             #[cfg(target_os = "windows")]
+             self.start_or_continue_log_load(false);
+        }
     }
     fn switch_focus(&mut self) {
         self.focus = match self.focus {
@@ -489,12 +604,16 @@ Event ID:    {}\n",
     }
 
     // Add scroll methods for preview
-    fn preview_scroll_down(&mut self) {
-        self.preview_scroll = self.preview_scroll.saturating_add(1);
+    fn preview_scroll_down(&mut self, lines: u16) {
+        self.preview_scroll = self.preview_scroll.saturating_add(lines);
     }
 
-    fn preview_scroll_up(&mut self) {
-        self.preview_scroll = self.preview_scroll.saturating_sub(1);
+    fn preview_scroll_up(&mut self, lines: u16) {
+        self.preview_scroll = self.preview_scroll.saturating_sub(lines);
+    }
+
+    fn preview_go_to_top(&mut self) {
+        self.preview_scroll = 0;
     }
 
     fn reset_preview_scroll(&mut self) {
@@ -519,145 +638,6 @@ impl Drop for AppState {
             self.log("Closed active event query handle.");
         }
     }
-}
-
-// Helper to extract text between two tags (robust, handles attributes, checks bounds)
-fn extract_tag_content<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
-    let start_tag_prefix = format!("<{}", tag);
-    let end_tag = format!("</{}>", tag);
-
-    if let Some(start_prefix_pos) = xml.find(&start_tag_prefix) {
-        // Define the start for searching for the closing '>' of the start tag
-        let search_start_for_gt = start_prefix_pos + start_tag_prefix.len();
-
-        // Ensure the search start position is valid before slicing/searching
-        if search_start_for_gt <= xml.len() {
-            // Find the closing '>' relative to search_start_for_gt
-            if let Some(start_tag_end_pos_rel) = xml[search_start_for_gt..].find('>') {
-                let content_start_abs = search_start_for_gt + start_tag_end_pos_rel + 1;
-
-                // Ensure content_start_abs is valid before slicing/searching
-                if content_start_abs <= xml.len() {
-                    // Find the closing tag relative to content_start_abs
-                    if let Some(end_tag_pos_rel) = xml[content_start_abs..].find(&end_tag) {
-                        let content_end_abs = content_start_abs + end_tag_pos_rel;
-
-                        // Final bound check before slicing
-                        if content_start_abs <= content_end_abs && content_end_abs <= xml.len() {
-                            return Some(xml[content_start_abs..content_end_abs].trim());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None // Return None if any step fails or indices are invalid
-}
-
-// Helper to format simple key-value pairs from XML sections
-fn format_simple_xml_section(xml_section: &str) -> String {
-    xml_section.lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.starts_with('<') && trimmed.ends_with('>') {
-                if let Some(tag_end) = trimmed.find('>') {
-                    let tag_part = &trimmed[1..tag_end];
-                    if let Some(content_start) = tag_end.checked_add(1) {
-                       if let Some(content_end) = trimmed.rfind("<") {
-                            let content = &trimmed[content_start..content_end];
-                            // Handle self-closing tags or attributes
-                            if let Some(attr_start) = tag_part.find(' ') {
-                                let tag_name = &tag_part[..attr_start];
-                                let attributes = &tag_part[attr_start..].trim();
-                                if content.is_empty() && trimmed.ends_with("/>") {
-                                    Some(format!("  {}: <{}>", tag_name, attributes))
-                                } else {
-                                    Some(format!("  {}: {} <{}>", tag_name, content, attributes))
-                                }
-                            } else {
-                                Some(format!("  {}: {}", tag_part, content))
-                            }
-                        } else { None }
-                    } else { None }
-                } else { None }
-            } else { None }
-        })
-        .collect::<Vec<String>>()
-        .join("\n")
-}
-
-// Helper to extract attribute value from a tag string
-fn extract_attribute_from_tag(tag_str: &str, attr_name: &str) -> Option<String> {
-    let attr_prefix_s = format!(" {}='", attr_name);
-    let attr_prefix_d = format!(" {}=\"", attr_name);
-    if let Some(start) = tag_str.find(&attr_prefix_s) {
-        let sub = &tag_str[start + attr_prefix_s.len()..];
-        if let Some(end) = sub.find('\'') {
-            return Some(sub[..end].to_string());
-        }
-    } else if let Some(start) = tag_str.find(&attr_prefix_d) {
-        let sub = &tag_str[start + attr_prefix_d.len()..];
-        if let Some(end) = sub.find('"') {
-            return Some(sub[..end].to_string());
-        }
-    }
-    None
-}
-
-// Specific formatter for Windows Error Reporting Event ID 1001
-fn format_wer_event_data(event_data_xml: &str) -> String {
-    use std::collections::HashMap;
-    let mut data_map = HashMap::new();
-
-    // Extract Name and content from each <Data> tag
-    for line in event_data_xml.lines() {
-        if let Some(data_content) = extract_tag_content(line, "Data") {
-            if let Some(name) = extract_attribute_from_tag(line, "Name") {
-                 data_map.insert(name, data_content.to_string());
-            }
-        }
-    }
-
-    // Build the formatted string based on WER structure
-    let mut result = String::new();
-    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType")) {
-        result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
-    }
-    if let Some(event_name) = data_map.get("EventName") { result.push_str(&format!("Event Name: {}\n", event_name)); }
-    if let Some(response) = data_map.get("Response") { result.push_str(&format!("Response: {}\n", response)); }
-    if let Some(cab_id) = data_map.get("CabId") { result.push_str(&format!("Cab Id: {}\n", cab_id)); }
-
-    result.push_str("\nProblem signature:\n");
-    for i in 1..=10 {
-        let p_key = format!("P{}", i);
-        if let Some(val) = data_map.get(&p_key) {
-            result.push_str(&format!("P{}: {}\n", i, val));
-        }
-    }
-
-    if let Some(attached_files) = data_map.get("AttachedFiles") {
-        result.push_str("\nAttached files:\n");
-        // Split potentially multi-line attached files string
-        for file in attached_files.lines() {
-            result.push_str(file.trim());
-            result.push('\n');
-        }
-    }
-
-     if let Some(store_path) = data_map.get("StorePath") {
-        result.push_str("\nThese files may be available here:\n");
-        result.push_str(store_path.trim());
-        result.push('\n');
-    }
-
-    if let Some(analysis_symbol) = data_map.get("AnalysisSymbol") { result.push_str(&format!("\nAnalysis symbol: {}\n", analysis_symbol)); }
-    if let Some(rechecking) = data_map.get("Rechecking") { result.push_str(&format!("Rechecking for solution: {}\n", rechecking)); }
-    if let Some(report_id) = data_map.get("ReportId") { result.push_str(&format!("Report Id: {}\n", report_id)); }
-    if let Some(report_status) = data_map.get("ReportStatus") { result.push_str(&format!("Report Status: {}\n", report_status)); }
-    if let Some(hashed_bucket) = data_map.get("HashedBucket") { result.push_str(&format!("Hashed bucket: {}\n", hashed_bucket)); }
-    if let Some(cab_guid) = data_map.get("CabGuid") { result.push_str(&format!("Cab Guid: {}\n", cab_guid)); }
-
-    result.trim_end().to_string()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -779,37 +759,62 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
 
     frame.render_widget(preview_paragraph, preview_area);
 
+    // --- Render Details Dialog --- (if visible)
     if let Some(event_details) = &mut app_state.event_details_dialog {
         if event_details.visible {
             let dialog_width = 70.min(frame.size().width.saturating_sub(4));
             let dialog_height = 20.min(frame.size().height.saturating_sub(4));
             let dialog_area = Rect::new((frame.size().width - dialog_width) / 2, (frame.size().height - dialog_height) / 2, dialog_width, dialog_height);
             frame.render_widget(Clear, dialog_area);
-            let dialog_block = Block::default().title(event_details.title.clone()).borders(Borders::ALL).border_style(Style::default().fg(Color::Blue));
+
+            // Determine title suffix based on view mode
+            let view_mode_suffix = match event_details.view_mode {
+                DetailsViewMode::Formatted => " (Formatted)",
+                DetailsViewMode::RawXml => " (Raw XML)",
+            };
+            let dialog_title = format!("{}{}", event_details.title, view_mode_suffix);
+
+            let dialog_block = Block::default()
+                .title(dialog_title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Blue));
+
+            // Help text for actions
+            let help_text = Line::from(vec![
+                Span::styled(" [Esc]", Style::default().fg(Color::Gray)), Span::raw(" Dismiss "),
+                Span::styled(" [v]", Style::default().fg(Color::Gray)), Span::raw(" Toggle View "),
+                Span::styled(" [s]", Style::default().fg(Color::Gray)), Span::raw(" Save Raw XML "),
+            ]).alignment(Alignment::Center);
+
             let dialog_layout = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(3)])
+                // Add space for help text
+                .constraints([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)])
                 .margin(1)
                 .split(dialog_area);
             frame.render_widget(dialog_block, dialog_area);
-            let content_lines: Vec<&str> = event_details.content.lines().collect();
+
+            // Render content based on view mode
+            let content_lines: Vec<&str> = event_details.current_content().lines().collect();
             let visible_height = dialog_layout[0].height as usize;
             let start_line = event_details.scroll_position.min(content_lines.len().saturating_sub(1));
             let end_line = (start_line + visible_height).min(content_lines.len());
             let visible_content = content_lines[start_line..end_line].join("\n");
-            let scroll_info = if content_lines.len() > visible_height { format!("[{}/{}]", start_line + 1, content_lines.len()) } else { "".to_string() };
-            let content_paragraph = Paragraph::new(visible_content).wrap(ratatui::widgets::Wrap { trim: false }).style(Style::default().fg(Color::White));
+            let content_paragraph = Paragraph::new(visible_content)
+                .wrap(Wrap { trim: false })
+                .style(Style::default().fg(Color::White));
             frame.render_widget(content_paragraph, dialog_layout[0]);
-            if !scroll_info.is_empty() {
+
+            // Render scroll indicator (if needed)
+            if content_lines.len() > visible_height {
+                let scroll_info = format!("[{}/{}]", start_line + 1, content_lines.len());
                 let scroll_rect = Rect::new(dialog_area.right() - scroll_info.len() as u16 - 2, dialog_area.y + 1, scroll_info.len() as u16, 1);
                 let scroll_indicator = Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
                 frame.render_widget(scroll_indicator, scroll_rect);
             }
-            let dismiss_button = Paragraph::new("  [Dismiss (Esc)]  ").block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Blue))).style(Style::default().fg(Color::White));
-            let button_width = 20;
-            let button_x = dialog_layout[1].x + (dialog_layout[1].width - button_width) / 2;
-            let button_area = Rect::new(button_x, dialog_layout[1].y, button_width, 3);
-            frame.render_widget(dismiss_button, button_area);
+
+            // Render help text at the bottom
+            frame.render_widget(help_text, dialog_layout[1]);
         }
     }
     if let Some(error_dialog) = &app_state.error_dialog {
@@ -837,32 +842,45 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
 }
 
 fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
-    if let Some(error_dialog) = &mut app_state.error_dialog {
-        if error_dialog.visible {
-            if key.code == KeyCode::Enter || key.code == KeyCode::Esc {
-                error_dialog.dismiss();
-                app_state.log("Dismissed error dialog");
-            }
-            return;
-        }
-    }
-    if let Some(event_details) = &mut app_state.event_details_dialog {
-        if event_details.visible {
+    // Clone focus state BEFORE potential borrows for dialogs
+    let current_focus = app_state.focus;
+
+    // --- Dialog Handling --- (Highest Priority)
+    if let Some(dialog) = &mut app_state.event_details_dialog {
+        if dialog.visible {
+            let visible_height = 18;
+            let mut key_handled = true; // Assume handled unless proven otherwise
             match key.code {
-                KeyCode::Esc => {
-                    event_details.dismiss();
-                    app_state.log("Dismissed event details dialog");
-                }
-                KeyCode::Up => event_details.scroll_up(),
-                KeyCode::Down => event_details.scroll_down(18),
-                KeyCode::PageUp => event_details.page_up(),
-                KeyCode::PageDown => event_details.page_down(18),
-                _ => {}
+                KeyCode::Esc => dialog.dismiss(),
+                KeyCode::Char('v') => dialog.toggle_view(),
+                KeyCode::Char('s') => {
+                    // TODO: Implement actual file saving (cannot call app_state.log here due to borrow rules)
+                    app_state.log("Save action triggered."); // Log simple message for now
+                },
+                KeyCode::Up => dialog.scroll_up(),
+                KeyCode::Down => dialog.scroll_down(visible_height),
+                KeyCode::PageUp => dialog.page_up(),
+                KeyCode::PageDown => dialog.page_down(visible_height),
+                KeyCode::Home | KeyCode::Char('g') => dialog.go_to_top(),
+                KeyCode::End | KeyCode::Char('G') => dialog.go_to_bottom(visible_height),
+                _ => { key_handled = false; } // Key was not for this dialog
             }
-            return;
+            if key_handled { return; } // If handled, consume and exit
         }
     }
-    match app_state.focus {
+    if let Some(dialog) = &mut app_state.error_dialog {
+        if dialog.visible {
+            let mut key_handled = true;
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => dialog.dismiss(),
+                _ => { key_handled = false; }
+            }
+             if key_handled { return; }
+        }
+    }
+
+    // --- Panel-Specific Handling --- (Use cloned focus)
+    match current_focus { // Use the cloned focus state here
         PanelFocus::Logs => match key.code {
             KeyCode::Char('q') => return,
             KeyCode::Up => app_state.previous_log(),
@@ -879,7 +897,7 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
                 app_state.start_or_continue_log_load(true);
                 app_state.switch_focus();
             }
-            _ => {}
+             _ => {}
         },
         PanelFocus::Events => match key.code {
             KeyCode::Char('q') => return,
@@ -887,6 +905,8 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
             KeyCode::Down => app_state.scroll_down(),
             KeyCode::PageUp => app_state.page_up(),
             KeyCode::PageDown => app_state.page_down(),
+            KeyCode::Home | KeyCode::Char('g') => app_state.go_to_top(),
+            KeyCode::End | KeyCode::Char('G') => app_state.go_to_bottom(),
             KeyCode::Enter => app_state.show_event_details(),
             KeyCode::Left | KeyCode::BackTab => app_state.switch_focus(),
             KeyCode::Tab => app_state.switch_focus(),
@@ -894,11 +914,13 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
         },
         PanelFocus::Preview => match key.code {
             KeyCode::Char('q') => return,
-            KeyCode::Up => app_state.preview_scroll_up(),
-            KeyCode::Down => app_state.preview_scroll_down(),
-            KeyCode::Left => app_state.switch_focus(),
+            KeyCode::Up => app_state.preview_scroll_up(1),
+            KeyCode::Down => app_state.preview_scroll_down(1),
+            KeyCode::PageUp => app_state.preview_scroll_up(10),
+            KeyCode::PageDown => app_state.preview_scroll_down(10),
+            KeyCode::Home | KeyCode::Char('g') => app_state.preview_go_to_top(),
+            KeyCode::Left | KeyCode::BackTab => app_state.switch_focus(),
             KeyCode::Tab => app_state.switch_focus(),
-            KeyCode::BackTab => app_state.switch_focus(),
             _ => {}
         },
     }
