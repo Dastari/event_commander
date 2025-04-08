@@ -20,25 +20,39 @@ use windows::{
     core::PCWSTR,
     Win32::Foundation::{GetLastError, ERROR_HANDLE_EOF, ERROR_INSUFFICIENT_BUFFER, HANDLE},
     Win32::System::EventLog::{
-        self, CloseEventLog, OpenEventLogW, ReadEventLogW,
-        READ_EVENT_LOG_READ_FLAGS
+        CloseEventLog, OpenEventLogW, ReadEventLogW, EVENTLOGRECORD,
+        EVENTLOG_SEQUENTIAL_READ, READ_EVENT_LOG_READ_FLAGS,
     },
 };
 
-// Define Windows Event Log constants since they're not directly importable
+// Define missing constant
 #[cfg(target_os = "windows")]
-mod windows_constants {
-    pub const EVENTLOG_SEQUENTIAL_READ: u32 = 0x0001;
-    pub const EVENTLOG_BACKWARDS_READ: u32 = 0x0008;
-    pub const EVENTLOG_ERROR_TYPE: u16 = 0x0001;
-    pub const EVENTLOG_WARNING_TYPE: u16 = 0x0002;
-    pub const EVENTLOG_INFORMATION_TYPE: u16 = 0x0004;
-    pub const EVENTLOG_AUDIT_SUCCESS: u16 = 0x0008;
-    pub const EVENTLOG_AUDIT_FAILURE: u16 = 0x0010;
-}
+const EVENTLOG_BACKWARDS_READ: u32 = 0x0008;
+#[cfg(target_os = "windows")]
+const EVENTLOG_ERROR_TYPE: u16 = 0x0001;
+#[cfg(target_os = "windows")]
+const EVENTLOG_WARNING_TYPE: u16 = 0x0002;
+#[cfg(target_os = "windows")]
+const EVENTLOG_INFORMATION_TYPE: u16 = 0x0004;
+#[cfg(target_os = "windows")]
+const EVENTLOG_AUDIT_SUCCESS: u16 = 0x0008;
+#[cfg(target_os = "windows")]
+const EVENTLOG_AUDIT_FAILURE: u16 = 0x0010;
 
-#[cfg(target_os = "windows")]
-use windows_constants::*;
+// #[cfg(target_os = "windows")]
+// mod windows_constants {
+//     // These constants are for reference, we'll use the Windows API directly
+//     pub const EVENTLOG_SEQUENTIAL_READ: u32 = 0x0001;
+//     pub const EVENTLOG_BACKWARDS_READ: u32 = 0x0008;
+//     pub const EVENTLOG_ERROR_TYPE: u16 = 0x0001;
+//     pub const EVENTLOG_WARNING_TYPE: u16 = 0x0002;
+//     pub const EVENTLOG_INFORMATION_TYPE: u16 = 0x0004;
+//     pub const EVENTLOG_AUDIT_SUCCESS: u16 = 0x0008;
+//     pub const EVENTLOG_AUDIT_FAILURE: u16 = 0x0010;
+// }
+
+// #[cfg(target_os = "windows")]
+// use windows_constants::*;
 
 #[cfg(not(target_os = "windows"))]
 mod windows_stubs {
@@ -300,7 +314,7 @@ impl AppState {
         
         unsafe {
             // First try NULL for the server name, which is documented to use local computer
-            let result = EventLog::OpenEventLogW(
+            let result = OpenEventLogW(
                 PCWSTR::null(),
                 PCWSTR::from_raw(log_name_wide.as_ptr())
             );
@@ -312,7 +326,7 @@ impl AppState {
                 
                 // Try with "localhost" as server name
                 let server_name = to_wide_string("localhost");
-                match EventLog::OpenEventLogW(
+                match OpenEventLogW(
                     PCWSTR::from_raw(server_name.as_ptr()),
                     PCWSTR::from_raw(log_name_wide.as_ptr())
                 ) {
@@ -346,8 +360,7 @@ impl AppState {
         let mut bytes_needed: u32 = 0;
         
         // Use sequential and backwards reading flags to get newest events first
-        // EVENTLOG_SEQUENTIAL_READ = 1, EVENTLOG_BACKWARDS_READ = 8
-        let flags: u32 = 1 | 8; 
+        let flags = READ_EVENT_LOG_READ_FLAGS(EVENTLOG_SEQUENTIAL_READ.0 | EVENTLOG_BACKWARDS_READ);
         
         self.log(&format!("Attempting to read events from: {}", self.selected_log_name));
         
@@ -359,9 +372,9 @@ impl AppState {
             let mut success = false;
             unsafe {
                 // Try with direct primitive values to avoid any type conversion issues
-                let result = EventLog::ReadEventLogW(
+                let result = ReadEventLogW(
                     event_log_handle,
-                    READ_EVENT_LOG_READ_FLAGS(flags),
+                    flags,
                     0, // RecordOffset
                     buffer.as_mut_ptr() as *mut core::ffi::c_void,
                     buffer_size,
@@ -426,75 +439,91 @@ impl AppState {
 
                 // Process the record and log attempts for better debugging
                 unsafe {
-                    if offset + std::mem::size_of::<EventLogRecord>() > buffer.len() {
+                    if offset + std::mem::size_of::<EVENTLOGRECORD>() > buffer.len() {
                         self.log(&format!("Buffer too small at offset {} (buffer size: {})", 
                                           offset, buffer.len()));
                         break;
                     }
                     
-                    // Directly access the record structure
-                    let record_ptr = buffer.as_ptr().add(offset) as *const EventLogRecord;
-                    let record = *record_ptr;
+                    // Access the record directly as an EVENTLOGRECORD
+                    let record_ptr = buffer.as_ptr().add(offset) as *const EVENTLOGRECORD;
+                    let record = &*record_ptr;
                     
                     // Validate record length
-                    if record.length == 0 {
+                    if record.Length == 0 {
                         self.log("Found record with zero length, skipping");
                         break;
                     }
                     
-                    if offset + record.length as usize > buffer.len() {
+                    if offset + record.Length as usize > buffer.len() {
                         self.log(&format!("Record length {} exceeds buffer at offset {}", 
-                                         record.length, offset));
+                                         record.Length, offset));
                         break;
                     }
                     
-                    self.log(&format!("Processing record: type={}, id={}, size={}", 
-                                      record.event_type, record.event_id, record.length));
+                    self.log(&format!("Processing record: type={:?}, id={}, size={}", 
+                                      record.EventType, record.EventID, record.Length));
                     
-                    // Extract source name
-                    let source_name = extract_source_name(&buffer, offset, record.string_offset);
+                    // Extract source name - pass the record pointer directly
+                    let source_name = extract_source_name(&buffer, offset, record_ptr);
                     
+                    // Log source name for debugging
+                    self.log(&format!("Extracted source name: {}", source_name));
+                    
+                    // *** Event Type Mapping ***
                     // Map the event type to a descriptive string
-                    let level = map_event_type(record.event_type);
+                    let level = match record.EventType.0 {
+                        1 => "Error".to_string(),        // EVENTLOG_ERROR_TYPE = 1u16
+                        2 => "Warning".to_string(),      // EVENTLOG_WARNING_TYPE = 2u16
+                        4 => "Information".to_string(),  // EVENTLOG_INFORMATION_TYPE = 4u16
+                        8 => "Audit Success".to_string(),// EVENTLOG_AUDIT_SUCCESS = 8u16
+                        16 => "Audit Failure".to_string(),// EVENTLOG_AUDIT_FAILURE = 16u16
+                        other => format!("Unknown({})", other),
+                    };
                     
                     // Convert time to readable format
                     let datetime = Utc
-                        .timestamp_opt(record.time_generated as i64, 0)
+                        .timestamp_opt(record.TimeGenerated as i64, 0)
                         .single()
                         .unwrap_or_else(Utc::now)
                         .with_timezone(&Local)
                         .format("%Y-%m-%d %H:%M:%S")
                         .to_string();
                         
-                    // Event ID is the lower 16 bits
-                    let event_id = (record.event_id & 0xFFFF) as u32;
+                    // Event ID processing - fix to get both full ID and customer event code
+                    let full_event_id = record.EventID;
+                    
+                    // For display, use the event code (lower 16 bits)
+                    let event_code = full_event_id & 0xFFFF;
                     
                     // Capture raw data for display in dialog
-                    let mut raw_data = format!("<Event>\n  <System>\n    <Provider Name=\"{}\" />\n    <EventID>{}</EventID>\n    <Level>{}</Level>\n    <Record>{}</Record>\n    <Computer>{}</Computer>\n    <TimeCreated SystemTime=\"{}\"/>\n    <TimeWritten SystemTime=\"{}\"/>\n    <Channel>{}</Channel>\n  </System>\n  <EventData>\n\n  </EventData>\n</Event>",
+                    let mut raw_data = format!("<Event>\n  <System>\n    <Provider Name=\"{}\" />\n    <EventID>{}</EventID>\n    <Level>{}</Level>\n    <Record>{}</Record>\n    <Computer>{}</Computer>\n    <TimeCreated SystemTime=\"{}\"/>\n    <TimeWritten SystemTime=\"{}\"/>\n    <Channel>{}</Channel>\n  </System>\n",
                         source_name,
-                        event_id,
+                        event_code,
                         level,
-                        record.record_number,
+                        record.RecordNumber,
                         std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Unknown".to_string()),
                         datetime,
-                        Utc.timestamp_opt(record.time_written as i64, 0).single()
+                        Utc.timestamp_opt(record.TimeWritten as i64, 0).single()
                            .unwrap_or_else(Utc::now).with_timezone(&Local)
                            .format("%Y-%m-%d %H:%M:%S").to_string(),
-                        record.event_category
+                        record.EventCategory
                     );
                     
                     // Try to extract event description strings
-                    if record.num_strings > 0 && record.string_offset > 0 {
-                        raw_data.push_str("<EventData>\n");
+                    if record.NumStrings > 0 && record.StringOffset > 0 {
+                        raw_data.push_str("  <EventData>\n");
                         
                         // Start at the first string (skip the source name)
-                        let mut string_pos = offset + record.string_offset as usize;
+                        let mut string_pos = offset + record.StringOffset as usize;
                         let mut string_processed = 0;
                         
                         // Skip the first string (source name) by finding its null terminator
                         let source_string_ptr = buffer.as_ptr().add(string_pos) as *const u16;
                         let mut i = 0;
+                        
                         unsafe {
+                            // Skip the source name string to get to the first actual data string
                             loop {
                                 if string_pos + (i * 2) >= buffer.len() {
                                     break;
@@ -513,56 +542,58 @@ impl AppState {
                                     break;
                                 }
                             }
-                        }
-                        
-                        // Now process the actual message strings
-                        for i in 0..record.num_strings - 1 { // -1 because we skip source name
-                            if string_pos >= buffer.len() || string_processed >= record.num_strings - 1 {
-                                break;
-                            }
                             
-                            // Read the string at current position
-                            let mut string_value = String::new();
-                            let string_ptr = buffer.as_ptr().add(string_pos) as *const u16;
-                            let mut j = 0;
-                            
-                            unsafe {
-                                loop {
-                                    if string_pos + (j * 2) >= buffer.len() {
+                            // Now process the actual message strings (if NumStrings > 1)
+                            if record.NumStrings > 1 {
+                                self.log(&format!("Processing {} message strings", record.NumStrings - 1));
+                                for i in 0..record.NumStrings - 1 { // -1 because we skip source name
+                                    if string_pos >= buffer.len() || string_processed >= record.NumStrings - 1 {
                                         break;
                                     }
                                     
-                                    let c = *string_ptr.add(j);
-                                    if c == 0 {
-                                        break;
+                                    // Read the string at current position
+                                    let mut string_value = String::new();
+                                    let string_ptr = buffer.as_ptr().add(string_pos) as *const u16;
+                                    let mut j = 0;
+                                    
+                                    loop {
+                                        if string_pos + (j * 2) >= buffer.len() {
+                                            break;
+                                        }
+                                        
+                                        let c = *string_ptr.add(j);
+                                        if c == 0 {
+                                            break;
+                                        }
+                                        
+                                        if let Some(ch) = char::from_u32(c as u32) {
+                                            string_value.push(ch);
+                                        }
+                                        
+                                        j += 1;
+                                        if j > 1000 { // Safety limit
+                                            string_value.push_str("... (truncated)");
+                                            break;
+                                        }
                                     }
                                     
-                                    if let Some(ch) = char::from_u32(c as u32) {
-                                        string_value.push(ch);
-                                    }
+                                    self.log(&format!("  Data string {}: {}", i+1, string_value));
+                                    raw_data.push_str(&format!("    <Data>{}</Data>\n", string_value));
+                                    string_processed += 1;
                                     
-                                    j += 1;
-                                    if j > 1000 { // Safety limit
-                                        string_value.push_str("... (truncated)");
-                                        break;
-                                    }
+                                    // Move to next string (skip null terminator)
+                                    string_pos += (j + 1) * 2;
                                 }
                             }
-                            
-                            raw_data.push_str(&format!("  Data: {}\n", string_value));
-                            string_processed += 1;
-                            
-                            // Move to next string (skip null terminator)
-                            string_pos += (j + 1) * 2;
                         }
-                        
-                        raw_data.push_str("</EventData>\n\n");
                     }
                     
+                    raw_data.push_str("  </EventData>\n");
+                    
                     // Try to extract binary data if present
-                    if record.data_length > 0 && record.data_offset > 0 {
-                        let data_start = offset + record.data_offset as usize;
-                        let data_end = (data_start + record.data_length as usize).min(buffer.len());
+                    if record.DataLength > 0 && record.DataOffset > 0 {
+                        let data_start = offset + record.DataOffset as usize;
+                        let data_end = (data_start + record.DataLength as usize).min(buffer.len());
                         
                         if data_start < buffer.len() {
                             raw_data.push_str("\nBinary Data (Hex):\n");
@@ -579,17 +610,20 @@ impl AppState {
                         }
                     }
                     
+                    // Close Event tag
+                    raw_data.push_str("</Event>");
+                    
                     // Add event to our list
                     self.events.push(DisplayEvent {
                         level,
                         datetime,
                         source: source_name,
-                        id: event_id.to_string(),
+                        id: event_code.to_string(),
                         raw_data,
                     });
                     
                     // Move to next record
-                    offset += record.length as usize;
+                    offset += record.Length as usize;
                 }
             }
             
@@ -607,7 +641,7 @@ impl AppState {
 
         // --- Close the Handle ---
         unsafe {
-            if let Err(error) = EventLog::CloseEventLog(event_log_handle) {
+            if let Err(error) = CloseEventLog(event_log_handle) {
                 self.log(&format!("Error closing event log handle: {:?}", error));
             }
         }
@@ -1150,24 +1184,29 @@ struct EventLogRecord {
 }
 
 #[cfg(target_os = "windows")]
-fn extract_source_name(buffer: &[u8], offset: usize, string_offset: u32) -> String {
-    // If no valid offset, return unknown
-    if string_offset == 0 || offset + string_offset as usize >= buffer.len() {
-        return "<unknown source>".to_string();
-    }
-    
-    // In Windows Event Log format, the source name is the first string in the string table
-    // This corresponds to the Provider Name/EventSourceName in the XML structure
-    let string_ptr = unsafe { buffer.as_ptr().add(offset + string_offset as usize) as *const u16 };
-    
-    // Read the string (source name) safely
-    let mut source = String::new();
-    let mut i = 0;
-    
+fn extract_source_name(buffer: &[u8], offset: usize, record_ptr: *const EVENTLOGRECORD) -> String {
     unsafe {
+        let record = &*record_ptr;
+        
+        // Remove debug println that interferes with UI
+        // println!("Record StringOffset: {}, NumStrings: {}", record.StringOffset, record.NumStrings);
+        
+        // If no valid offset or no strings, return unknown
+        if record.StringOffset == 0 || record.NumStrings == 0 || offset + record.StringOffset as usize >= buffer.len() {
+            return "<unknown source>".to_string();
+        }
+        
+        // The source name is the first string after the fixed part of the record,
+        // starting at StringOffset which is relative to the start of the record
+        let string_ptr = buffer.as_ptr().add(offset + record.StringOffset as usize) as *const u16;
+        
+        // Read the string (source name) safely
+        let mut source = String::new();
+        let mut i = 0;
+        
         loop {
             // Check boundary
-            if offset + string_offset as usize + (i * 2) >= buffer.len() {
+            if offset + record.StringOffset as usize + (i * 2) >= buffer.len() {
                 break;
             }
             
@@ -1185,25 +1224,37 @@ fn extract_source_name(buffer: &[u8], offset: usize, string_offset: u32) -> Stri
                 break;
             }
         }
+        
+        // Clean up the source name
+        if source.is_empty() {
+            return "<unknown source>".to_string();
+        }
+        
+        // If something seems wrong with the source (too long, contains brackets, etc.)
+        // it might not be a real source name
+        if source.len() > 50 || source.contains('[') || source.contains(']') {
+            // Remove debug println
+            // println!("Suspicious source name detected: {}", source);
+            return "Unknown Provider".to_string();
+        }
+        
+        // Apply known provider name mappings for display consistency
+        match source.as_str() {
+            s if s.eq_ignore_ascii_case("service control manager") => "Service Control Manager",
+            s if s.eq_ignore_ascii_case("microsoft-windows-security-spp") => "Security-SPP",
+            s if s.eq_ignore_ascii_case("microsoft-windows-bits-client") => "BITS",
+            s if s.contains("SPP") => "Security-SPP",
+            s if s.contains("BITS") => "BITS",
+            s if s.eq_ignore_ascii_case("perflib") => "Perflib",
+            s if s.eq_ignore_ascii_case("BrowserBroker") => "Browser",
+            s if s.eq_ignore_ascii_case("eventlog") => "EventLog",
+            s if s.eq_ignore_ascii_case("microsoft-windows-wer") 
+               || s.eq_ignore_ascii_case("windows error reporting") => "Windows Error Reporting",
+            // If the source is all numeric, it's not the real source name
+            s if s.chars().all(char::is_numeric) => "Unknown Provider",
+            _ => &source,
+        }.to_string()
     }
-    
-    // Clean up the source name
-    if source.is_empty() {
-        return "<unknown source>".to_string();
-    }
-    
-    // Format provider names to match Windows Event Viewer display
-    match source.as_str() {
-        s if s.eq_ignore_ascii_case("service control manager") => "Service Control Manager",
-        s if s.eq_ignore_ascii_case("microsoft-windows-security-spp") => "Microsoft-Windows-Security-SPP",
-        s if s.eq_ignore_ascii_case("microsoft-windows-bits-client") => "Microsoft-Windows-Bits-Client",
-        s if s.contains("SPP") => "Security-SPP",
-        s if s.contains("BITS") => "BITS",
-        s if s.contains("edgeupdate") => "edgeupdatem",
-        // If the source is all numeric, it's not the real source name
-        s if s.chars().all(char::is_numeric) => "Unknown Provider",
-        _ => &source,
-    }.to_string()
 }
 
 #[cfg(not(target_os = "windows"))]
