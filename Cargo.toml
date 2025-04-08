@@ -1,6 +1,6 @@
 [package]
 name = "event_commander"
-version = "0.1.0"
+version = "1.0.1"
 edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -12,3 +12,10 @@ minidom = "0.16.0"
 quick-xml = { version = "0.31", features = ["serialize"] }
 windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_System_EventLog", "Win32_System_Threading", "Win32_System_Console"] }
 chrono = "0.4"
+
+[profile.release]
+opt-level = 'z'  # Optimize for size.
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true     # Strip symbols from binary

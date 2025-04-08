@@ -10,31 +10,27 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap},
 };
 use std::{
+    collections::HashMap,
     error::Error,
+    fs,
     io::{self, stdout, Stdout},
     time::Duration,
     vec,
-    fs,
 };
 use windows::{
     core::PCWSTR,
-    Win32::Foundation::{GetLastError, ERROR_NO_MORE_ITEMS},
-    Win32::System::EventLog::{EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml, EVT_HANDLE, EvtQueryChannelPath, EvtQueryReverseDirection},
+    Win32::{
+        Foundation::{GetLastError, ERROR_NO_MORE_ITEMS},
+        System::EventLog::{EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml, EVT_HANDLE, EvtQueryChannelPath, EvtQueryReverseDirection},
+    },
 };
 use minidom::{Element, NSChoice};
 use quick_xml::{events::Event as XmlEvent, Reader, Writer};
-use std::collections::HashMap;
 use std::io::Cursor;
 
 const EVENT_XML_NS: &str = "http://schemas.microsoft.com/win/2004/08/events/event";
 const EVENT_BATCH_SIZE: usize = 100;
-const LOG_NAMES: [&str; 5] = [
-    "Application",
-    "System",
-    "Security",
-    "Setup",
-    "ForwardedEvents",
-];
+const LOG_NAMES: [&str; 5] = ["Application", "System", "Security", "Setup", "ForwardedEvents"];
 
 fn to_wide_string(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -49,9 +45,18 @@ fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
             return None;
         }
         let mut buffer: Vec<u16> = vec![0; buffer_used as usize];
-        if EvtRender(None, event_handle, EvtRenderEventXml.0, buffer_used, Some(buffer.as_mut_ptr() as *mut _), &mut buffer_used, &mut property_count).is_ok() {
-            let xml = String::from_utf16_lossy(&buffer);
-            Some(xml)
+        if EvtRender(
+            None,
+            event_handle,
+            EvtRenderEventXml.0,
+            buffer_used,
+            Some(buffer.as_mut_ptr() as *mut _),
+            &mut buffer_used,
+            &mut property_count,
+        )
+        .is_ok()
+        {
+            Some(String::from_utf16_lossy(&buffer))
         } else {
             None
         }
@@ -61,16 +66,13 @@ fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
 fn find_attribute_value<'a>(xml: &'a str, attribute_name: &str) -> Option<&'a str> {
     if let Some(start_pos) = xml.find(&format!("{}='", attribute_name)) {
         let sub = &xml[start_pos + attribute_name.len() + 2..];
-        if let Some(end_pos) = sub.find('\'') {
-            return Some(&sub[..end_pos]);
-        }
+        sub.find('\'').map(|end_pos| &sub[..end_pos])
     } else if let Some(start_pos) = xml.find(&format!("{}=\"", attribute_name)) {
         let sub = &xml[start_pos + attribute_name.len() + 2..];
-        if let Some(end_pos) = sub.find('"') {
-            return Some(&sub[..end_pos]);
-        }
+        sub.find('"').map(|end_pos| &sub[..end_pos])
+    } else {
+        None
     }
-    None
 }
 
 fn get_child_text(parent: &Element, child_name: &str) -> String {
@@ -79,7 +81,7 @@ fn get_child_text(parent: &Element, child_name: &str) -> String {
 }
 
 fn get_attr(element: &Element, attr_name: &str) -> Option<String> {
-    element.attr(attr_name).map(|s| s.to_string())
+    element.attr(attr_name).map(str::to_string)
 }
 
 fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
@@ -93,9 +95,15 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
     if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType")) {
         result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
     }
-    if let Some(event_name) = data_map.get("EventName") { result.push_str(&format!("Event Name: {}\n", event_name)); }
-    if let Some(response) = data_map.get("Response") { result.push_str(&format!("Response: {}\n", response)); }
-    if let Some(cab_id) = data_map.get("CabId") { result.push_str(&format!("Cab Id: {}\n", cab_id)); }
+    if let Some(event_name) = data_map.get("EventName") {
+        result.push_str(&format!("Event Name: {}\n", event_name));
+    }
+    if let Some(response) = data_map.get("Response") {
+        result.push_str(&format!("Response: {}\n", response));
+    }
+    if let Some(cab_id) = data_map.get("CabId") {
+        result.push_str(&format!("Cab Id: {}\n", cab_id));
+    }
     result.push_str("\nProblem signature:\n");
     for i in 1..=10 {
         let p_key = format!("P{}", i);
@@ -115,17 +123,30 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
         result.push_str(store_path.trim());
         result.push('\n');
     }
-    if let Some(analysis_symbol) = data_map.get("AnalysisSymbol") { result.push_str(&format!("\nAnalysis symbol: {}\n", analysis_symbol)); }
-    if let Some(rechecking) = data_map.get("Rechecking") { result.push_str(&format!("Rechecking for solution: {}\n", rechecking)); }
-    if let Some(report_id) = data_map.get("ReportId") { result.push_str(&format!("Report Id: {}\n", report_id)); }
-    if let Some(report_status) = data_map.get("ReportStatus") { result.push_str(&format!("Report Status: {}\n", report_status)); }
-    if let Some(hashed_bucket) = data_map.get("HashedBucket") { result.push_str(&format!("Hashed bucket: {}\n", hashed_bucket)); }
-    if let Some(cab_guid) = data_map.get("CabGuid") { result.push_str(&format!("Cab Guid: {}\n", cab_guid)); }
+    if let Some(analysis_symbol) = data_map.get("AnalysisSymbol") {
+        result.push_str(&format!("\nAnalysis symbol: {}\n", analysis_symbol));
+    }
+    if let Some(rechecking) = data_map.get("Rechecking") {
+        result.push_str(&format!("Rechecking for solution: {}\n", rechecking));
+    }
+    if let Some(report_id) = data_map.get("ReportId") {
+        result.push_str(&format!("Report Id: {}\n", report_id));
+    }
+    if let Some(report_status) = data_map.get("ReportStatus") {
+        result.push_str(&format!("Report Status: {}\n", report_status));
+    }
+    if let Some(hashed_bucket) = data_map.get("HashedBucket") {
+        result.push_str(&format!("Hashed bucket: {}\n", hashed_bucket));
+    }
+    if let Some(cab_guid) = data_map.get("CabGuid") {
+        result.push_str(&format!("Cab Guid: {}\n", cab_guid));
+    }
     result.trim_end().to_string()
 }
 
 fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
-    event_data_element.children()
+    event_data_element
+        .children()
         .filter(|c| c.is("Data", EVENT_XML_NS))
         .map(|data_el| {
             let name = data_el.attr("Name").unwrap_or("Data");
@@ -136,7 +157,7 @@ fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
                 format!("  {}: {}", name, value)
             }
         })
-        .collect::<Vec<String>>()
+        .collect::<Vec<_>>()
         .join("\n")
 }
 
@@ -149,9 +170,10 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
     let mut message = "<Parse Error>".to_string();
     if let Ok(root) = root {
         if let Some(system) = root.get_child("System", EVENT_XML_NS) {
-            source = system.get_child("Provider", EVENT_XML_NS)
-                        .and_then(|prov| get_attr(prov, "Name"))
-                        .unwrap_or_else(|| "<Unknown Provider>".to_string());
+            source = system
+                .get_child("Provider", EVENT_XML_NS)
+                .and_then(|prov| get_attr(prov, "Name"))
+                .unwrap_or_else(|| "<Unknown Provider>".to_string());
             if source.starts_with("Microsoft-Windows-") {
                 source = source.trim_start_matches("Microsoft-Windows-").to_string();
             }
@@ -163,20 +185,20 @@ fn parse_event_xml(xml: &str) -> DisplayEvent {
                 "3" => "Warning".to_string(),
                 "4" => "Information".to_string(),
                 "5" => "Verbose".to_string(),
-                 _ => format!("Unknown({})", level_raw),
+                _ => format!("Unknown({})", level_raw),
             };
-            datetime = system.get_child("TimeCreated", EVENT_XML_NS)
-                          .and_then(|time_el| get_attr(time_el, "SystemTime"))
-                          .map(|time_str| {
-                              match chrono::DateTime::parse_from_rfc3339(&time_str) {
-                                  Ok(dt) => dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string(),
-                                  Err(_) => time_str.to_string(),
-                              }
-                          })
-                          .unwrap_or_default();
+            datetime = system
+                .get_child("TimeCreated", EVENT_XML_NS)
+                .and_then(|time_el| get_attr(time_el, "SystemTime"))
+                .map(|time_str| {
+                    chrono::DateTime::parse_from_rfc3339(&time_str)
+                        .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or(time_str)
+                })
+                .unwrap_or_default();
         }
         if let Some(event_data) = root.get_child("EventData", EVENT_XML_NS) {
-             message = if source == "Windows Error Reporting" && id == "1001" {
+            message = if source == "Windows Error Reporting" && id == "1001" {
                 format_wer_event_data_minidom(event_data)
             } else {
                 format_generic_event_data_minidom(event_data)
@@ -236,12 +258,7 @@ struct EventDetailsDialog {
 
 impl StatusDialog {
     fn new(title: &str, message: &str, is_error: bool) -> Self {
-        StatusDialog {
-            title: title.to_string(),
-            message: message.to_string(),
-            visible: true,
-            is_error,
-        }
+        Self { title: title.to_string(), message: message.to_string(), visible: true, is_error }
     }
     fn dismiss(&mut self) {
         self.visible = false;
@@ -250,15 +267,15 @@ impl StatusDialog {
 
 impl EventDetailsDialog {
     fn new(
-        title: &str, 
-        formatted_content: &str, 
+        title: &str,
+        formatted_content: &str,
         raw_xml: &str,
         log_name: &str,
         event_id: &str,
         event_datetime: &str,
         event_source: &str,
     ) -> Self {
-        EventDetailsDialog {
+        Self {
             title: title.to_string(),
             formatted_content: formatted_content.to_string(),
             raw_xml: raw_xml.to_string(),
@@ -309,16 +326,14 @@ impl EventDetailsDialog {
     fn page_down(&mut self, visible_height: usize) {
         let content_lines = self.current_content().lines().count();
         let max_scroll = content_lines.saturating_sub(visible_height.max(1));
-        let target_pos = self.scroll_position.saturating_add(10);
-        self.scroll_position = target_pos.min(max_scroll);
+        self.scroll_position = self.scroll_position.saturating_add(10).min(max_scroll);
     }
     fn go_to_top(&mut self) {
         self.scroll_position = 0;
     }
     fn go_to_bottom(&mut self, visible_height: usize) {
         let content_lines = self.current_content().lines().count();
-        let max_scroll = content_lines.saturating_sub(visible_height.max(1));
-        self.scroll_position = max_scroll;
+        self.scroll_position = content_lines.saturating_sub(visible_height.max(1));
     }
 }
 
@@ -347,11 +362,16 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
-        let log_file = std::fs::OpenOptions::new().create(true).write(true).append(true).open("event_commander.log").ok();
-        AppState {
+        let log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open("event_commander.log")
+            .ok();
+        Self {
             focus: PanelFocus::Logs,
             selected_log_index: 0,
-            selected_log_name: "".to_string(),
+            selected_log_name: String::new(),
             events: Vec::new(),
             table_state: TableState::default(),
             preview_scroll: 0,
@@ -385,18 +405,17 @@ impl AppState {
         if let Some(selected) = self.table_state.selected() {
             if let Some(event) = self.events.get(selected) {
                 let title = format!("Event Details: {} ({})", event.source, event.id);
-                let mut formatted_content = String::new();
-                formatted_content.push_str(&format!(
+                let mut formatted_content = format!(
                     "Level:       {}\nDateTime:    {}\nSource:      {}\nEvent ID:    {}\n",
                     event.level, event.datetime, event.source, event.id
-                ));
+                );
                 formatted_content.push_str("\n--- Message ---\n");
-                formatted_content.push_str(&event.message); 
+                formatted_content.push_str(&event.message);
                 formatted_content.push('\n');
                 self.event_details_dialog = Some(EventDetailsDialog::new(
                     &title,
                     &formatted_content,
-                    &event.raw_data, 
+                    &event.raw_data,
                     &self.selected_log_name,
                     &event.id,
                     &event.datetime,
@@ -428,7 +447,10 @@ impl AppState {
                 }
                 self.log("Closed previous query handle.");
             }
-            self.selected_log_name = LOG_NAMES.get(self.selected_log_index).map(|s| s.to_string()).unwrap_or_else(|| "".to_string());
+            self.selected_log_name = LOG_NAMES
+                .get(self.selected_log_index)
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             if self.selected_log_name.is_empty() {
                 self.show_error("Loading Error", "No log name selected.");
                 self.is_loading = false;
@@ -454,7 +476,6 @@ impl AppState {
             self.log("Continuing log load...");
         }
         if let Some(query_handle) = self.query_handle {
-            let _initial_event_count = self.events.len();
             let mut new_events_fetched = 0;
             unsafe {
                 loop {
@@ -480,8 +501,7 @@ impl AppState {
                     for i in 0..(fetched as usize) {
                         let event_handle = events_buffer[i];
                         if let Some(xml) = render_event_xml(event_handle) {
-                            let display_event = parse_event_xml(&xml);
-                            self.events.push(display_event);
+                            self.events.push(parse_event_xml(&xml));
                             new_events_fetched += 1;
                         }
                         let _ = EvtClose(event_handle);
@@ -650,7 +670,10 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .constraints([Constraint::Length(25), Constraint::Min(0)])
         .split(frame.size());
     let log_items: Vec<ListItem> = LOG_NAMES.iter().map(|&name| ListItem::new(name)).collect();
-    let log_list_block = Block::default().title("Event Viewer (Local)").borders(Borders::ALL).border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs { Color::Cyan } else { Color::White }));
+    let log_list_block = Block::default()
+        .title("Event Viewer (Local)")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs { Color::Cyan } else { Color::White }));
     let log_list = List::new(log_items)
         .block(log_list_block)
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(if app_state.focus == PanelFocus::Logs { Color::Blue } else { Color::DarkGray }))
@@ -660,10 +683,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     frame.render_stateful_widget(log_list, main_layout[0], &mut log_list_state);
     let right_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),
-            Constraint::Length(8),
-        ])
+        .constraints([Constraint::Min(1), Constraint::Length(8)])
         .split(main_layout[1]);
     let events_area = right_layout[0];
     let preview_area = right_layout[1];
@@ -684,13 +704,8 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let header_cells = ["Level", "Date and Time", "Source", "Event ID"]
         .iter()
         .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
-    let header = Row::new(header_cells).style(Style::default().bg(Color::DarkGray)).height(1).bottom_margin(0);
-    let widths = [
-        Constraint::Length(11),
-        Constraint::Length(20),
-        Constraint::Percentage(60),
-        Constraint::Length(10)
-    ];
+    let header = Row::new(header_cells).style(Style::default().bg(Color::DarkGray)).height(1);
+    let widths = [Constraint::Length(11), Constraint::Length(20), Constraint::Percentage(60), Constraint::Length(10)];
     let event_table_block = Block::default()
         .title(format!("Events: {}", app_state.selected_log_name))
         .borders(Borders::ALL)
@@ -707,8 +722,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if app_state.focus == PanelFocus::Preview { Color::Cyan } else { Color::White }));
     let preview_message = if let Some(selected_index) = app_state.table_state.selected() {
-        app_state.events.get(selected_index)
-            .map_or("<Message not available>".to_string(), |event| event.message.clone())
+        app_state.events.get(selected_index).map_or("<Message not available>".to_string(), |event| event.message.clone())
     } else {
         "<No event selected>".to_string()
     };
@@ -750,14 +764,8 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             let current_content_string = event_details.current_content();
             let content_lines: Vec<&str> = current_content_string.lines().collect();
             let start_line = event_details.scroll_position.min(content_lines.len().saturating_sub(1));
-            let end_line = (start_line + visible_height).min(content_lines.len());
-            let end_line = end_line.max(start_line);
-            let visible_content_slice = if content_lines.is_empty() {
-                &[][..]
-            } else {
-                &content_lines[start_line..end_line]
-            };
-            let visible_content = visible_content_slice.join("\n");
+            let end_line = (start_line + visible_height).min(content_lines.len()).max(start_line);
+            let visible_content = if content_lines.is_empty() { String::new() } else { content_lines[start_line..end_line].join("\n") };
             let content_paragraph = Paragraph::new(visible_content)
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(Color::White));
@@ -765,12 +773,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             frame.render_widget(content_paragraph, content_area);
             if content_lines.len() > visible_height {
                 let scroll_info = format!("[{}/{}]", start_line + 1, content_lines.len());
-                let scroll_rect = Rect::new(
-                    content_area.right().saturating_sub(scroll_info.len() as u16 + 1),
-                    content_area.y,
-                    scroll_info.len() as u16,
-                    1,
-                );
+                let scroll_rect = Rect::new(content_area.right().saturating_sub(scroll_info.len() as u16 + 1), content_area.y, scroll_info.len() as u16, 1);
                 let scroll_indicator = Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
                 frame.render_widget(scroll_indicator, scroll_rect);
             }
@@ -849,26 +852,24 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
                         }
                     }
                     key_handled_by_dialog = true;
-                 },
-                 KeyCode::Up => { dialog.scroll_up(); key_handled_by_dialog = true; },
-                 KeyCode::Down => { dialog.scroll_down(visible_height); key_handled_by_dialog = true; },
-                 KeyCode::PageUp => { dialog.page_up(); key_handled_by_dialog = true; },
-                 KeyCode::PageDown => { dialog.page_down(visible_height); key_handled_by_dialog = true; },
-                 KeyCode::Home | KeyCode::Char('g') => { dialog.go_to_top(); key_handled_by_dialog = true; },
-                 KeyCode::End | KeyCode::Char('G') => { dialog.go_to_bottom(visible_height); key_handled_by_dialog = true; },
-                 _ => {}
+                },
+                KeyCode::Up => { dialog.scroll_up(); key_handled_by_dialog = true; },
+                KeyCode::Down => { dialog.scroll_down(visible_height); key_handled_by_dialog = true; },
+                KeyCode::PageUp => { dialog.page_up(); key_handled_by_dialog = true; },
+                KeyCode::PageDown => { dialog.page_down(visible_height); key_handled_by_dialog = true; },
+                KeyCode::Home | KeyCode::Char('g') => { dialog.go_to_top(); key_handled_by_dialog = true; },
+                KeyCode::End | KeyCode::Char('G') => { dialog.go_to_bottom(visible_height); key_handled_by_dialog = true; },
+                _ => {}
             }
         }
     }
     if !key_handled_by_dialog {
+        
         if let Some(dialog) = &mut app_state.status_dialog {
             if dialog.visible {
-                match key.code {
-                    KeyCode::Enter | KeyCode::Esc => {
-                        dialog.dismiss();
-                        key_handled_by_dialog = true;
-                    }
-                    _ => {}
+                if let KeyCode::Enter | KeyCode::Esc = key.code {
+                    dialog.dismiss();
+                    key_handled_by_dialog = true;
                 }
             }
         }
@@ -899,7 +900,7 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) {
                 app_state.start_or_continue_log_load(true);
                 app_state.switch_focus();
             }
-             _ => {}
+            _ => {}
         },
         PanelFocus::Events => match key.code {
             KeyCode::Char('q') => return,
@@ -935,55 +936,17 @@ fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
     let mut buf = Vec::new();
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(XmlEvent::Start(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::Start(e)) {
-                    return Err(format!("XML Write Error (Start): {}", e));
-                }
-            }
-            Ok(XmlEvent::End(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::End(e)) {
-                    return Err(format!("XML Write Error (End): {}", e));
-                }
-            }
-            Ok(XmlEvent::Empty(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::Empty(e)) {
-                    return Err(format!("XML Write Error (Empty): {}", e));
-                }
-            }
-            Ok(XmlEvent::Text(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::Text(e)) {
-                     return Err(format!("XML Write Error (Text): {}", e));
-                }
-            }
-            Ok(XmlEvent::Comment(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::Comment(e)) {
-                    return Err(format!("XML Write Error (Comment): {}", e));
-                }
-            }
-            Ok(XmlEvent::CData(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::CData(e)) {
-                    return Err(format!("XML Write Error (CData): {}", e));
-                }
-            }
-            Ok(XmlEvent::Decl(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::Decl(e)) {
-                    return Err(format!("XML Write Error (Decl): {}", e));
-                }
-            }
-            Ok(XmlEvent::PI(e)) => {
-                if let Err(e) = writer.write_event(XmlEvent::PI(e)) {
-                    return Err(format!("XML Write Error (PI): {}", e));
-                }
-            }
-            Ok(XmlEvent::DocType(e)) => {
-                 if let Err(e) = writer.write_event(XmlEvent::DocType(e)) {
-                    return Err(format!("XML Write Error (DocType): {}", e));
-                 }
-            }
+            Ok(XmlEvent::Start(e)) => writer.write_event(XmlEvent::Start(e)).map_err(|e| format!("XML Write Error (Start): {}", e))?,
+            Ok(XmlEvent::End(e)) => writer.write_event(XmlEvent::End(e)).map_err(|e| format!("XML Write Error (End): {}", e))?,
+            Ok(XmlEvent::Empty(e)) => writer.write_event(XmlEvent::Empty(e)).map_err(|e| format!("XML Write Error (Empty): {}", e))?,
+            Ok(XmlEvent::Text(e)) => writer.write_event(XmlEvent::Text(e)).map_err(|e| format!("XML Write Error (Text): {}", e))?,
+            Ok(XmlEvent::Comment(e)) => writer.write_event(XmlEvent::Comment(e)).map_err(|e| format!("XML Write Error (Comment): {}", e))?,
+            Ok(XmlEvent::CData(e)) => writer.write_event(XmlEvent::CData(e)).map_err(|e| format!("XML Write Error (CData): {}", e))?,
+            Ok(XmlEvent::Decl(e)) => writer.write_event(XmlEvent::Decl(e)).map_err(|e| format!("XML Write Error (Decl): {}", e))?,
+            Ok(XmlEvent::PI(e)) => writer.write_event(XmlEvent::PI(e)).map_err(|e| format!("XML Write Error (PI): {}", e))?,
+            Ok(XmlEvent::DocType(e)) => writer.write_event(XmlEvent::DocType(e)).map_err(|e| format!("XML Write Error (DocType): {}", e))?,
             Ok(XmlEvent::Eof) => break,
-            Err(e) => {
-                 return Err(format!("XML Read Error: {}", e));
-            }
+            Err(e) => return Err(format!("XML Read Error: {}", e)),
         }
         buf.clear();
     }
