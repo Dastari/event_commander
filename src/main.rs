@@ -4,7 +4,6 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use minidom::Element;
 use quick_xml::{Reader, Writer, events::Event as XmlEvent};
 use ratatui::{
     prelude::*,
@@ -16,7 +15,6 @@ use ratatui::{
     },
 };
 use std::{
-    collections::HashMap,
     error::Error,
     fs,
     io::{self, Cursor, Stdout, stdout},
@@ -34,7 +32,6 @@ use windows::{
     core::PCWSTR,
 };
 
-const EVENT_XML_NS: &str = "http://schemas.microsoft.com/win/2004/08/events/event";
 const EVENT_BATCH_SIZE: usize = 100;
 const LOG_NAMES: [&str; 5] = [
     "Application",
@@ -87,32 +84,213 @@ fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
     }
 }
 
-/// Retrieves the text of a child element with the specified name from a parent element.
-/// Returns an empty string if the child does not exist.
-fn get_child_text(parent: &Element, child_name: &str) -> String {
-    parent
-        .get_child(child_name, EVENT_XML_NS)
-        .map_or(String::new(), |el| el.text().to_string())
-}
-
-/// Gets the value of the specified attribute from an element.
-fn get_attr(element: &Element, attr_name: &str) -> Option<String> {
-    element.attr(attr_name).map(str::to_string)
-}
-
-/// Formats Windows Error Reporting event data from a minidom XML element.
+/// Parses an event XML string and returns a DisplayEvent struct with extracted data.
 #[cfg(target_os = "windows")]
-fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
-    let mut data_map = HashMap::new();
-    for data_el in event_data_element
-        .children()
-        .filter(|c| c.is("Data", EVENT_XML_NS))
-    {
-        if let Some(name) = data_el.attr("Name") {
-            data_map.insert(name.to_string(), data_el.text().to_string());
+fn parse_event_xml(xml: &str) -> DisplayEvent {
+    let mut source = "<Parse Error>".to_string();
+    let mut id = "0".to_string();
+    let mut level = "Unknown".to_string();
+    let mut datetime = String::new();
+
+    // Create a quick-xml reader to process the XML
+    let mut reader = Reader::from_str(xml);
+    reader.trim_text(true);
+    reader.expand_empty_elements(true);
+
+    let mut buf = Vec::new();
+    let mut inside_system = false;
+    let mut inside_event_data = false;
+
+    // Track if we're inside a particular element
+    let mut inside_event_id = false;
+    let mut inside_level = false;
+
+    // We'll collect event data as we go
+    let mut data_map = std::collections::HashMap::new();
+    let mut current_data_name = None;
+    let mut current_data_value = String::new();
+    let mut inside_data = false;
+
+    // Process the XML
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(XmlEvent::Start(ref e)) => {
+                let local_name = std::str::from_utf8(e.name().local_name().into_inner())
+                    .unwrap_or("")
+                    .to_string();
+
+                match local_name.as_str() {
+                    "System" => {
+                        inside_system = true;
+                    }
+                    "Provider" if inside_system => {
+                        // Extract Provider Name attribute
+                        for attr_result in e.attributes() {
+                            if let Ok(attr) = attr_result {
+                                let attr_key =
+                                    std::str::from_utf8(attr.key.local_name().into_inner())
+                                        .unwrap_or("")
+                                        .to_string();
+                                if attr_key == "Name" {
+                                    let value =
+                                        attr.unescape_value().unwrap_or_default().to_string();
+                                    source = value;
+                                }
+                            }
+                        }
+                    }
+                    "EventID" if inside_system => {
+                        inside_event_id = true;
+                    }
+                    "Level" if inside_system => {
+                        inside_level = true;
+                    }
+                    "TimeCreated" if inside_system => {
+                        // Extract SystemTime attribute
+                        for attr_result in e.attributes() {
+                            if let Ok(attr) = attr_result {
+                                let attr_key =
+                                    std::str::from_utf8(attr.key.local_name().into_inner())
+                                        .unwrap_or("")
+                                        .to_string();
+                                if attr_key == "SystemTime" {
+                                    let time_str =
+                                        attr.unescape_value().unwrap_or_default().to_string();
+                                    datetime = chrono::DateTime::parse_from_rfc3339(&time_str)
+                                        .map(|dt| {
+                                            dt.with_timezone(&Local)
+                                                .format("%Y-%m-%d %H:%M:%S")
+                                                .to_string()
+                                        })
+                                        .unwrap_or(time_str);
+                                }
+                            }
+                        }
+                    }
+                    "EventData" => {
+                        inside_event_data = true;
+                    }
+                    "Data" if inside_event_data => {
+                        inside_data = true;
+                        current_data_value.clear();
+
+                        // Check for a Name attribute
+                        current_data_name = None;
+                        for attr_result in e.attributes() {
+                            if let Ok(attr) = attr_result {
+                                let attr_key =
+                                    std::str::from_utf8(attr.key.local_name().into_inner())
+                                        .unwrap_or("")
+                                        .to_string();
+                                if attr_key == "Name" {
+                                    let value =
+                                        attr.unescape_value().unwrap_or_default().to_string();
+                                    current_data_name = Some(value);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(XmlEvent::End(ref e)) => {
+                let local_name = std::str::from_utf8(e.name().local_name().into_inner())
+                    .unwrap_or("")
+                    .to_string();
+
+                match local_name.as_str() {
+                    "System" => {
+                        inside_system = false;
+                    }
+                    "EventID" => {
+                        inside_event_id = false;
+                    }
+                    "Level" => {
+                        inside_level = false;
+                    }
+                    "EventData" => {
+                        inside_event_data = false;
+                    }
+                    "Data" if inside_event_data => {
+                        inside_data = false;
+                        if let Some(name) = current_data_name.take() {
+                            data_map.insert(name, current_data_value.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(XmlEvent::Text(ref e)) => {
+                let text = e.unescape().unwrap_or_default().to_string();
+
+                if inside_event_id {
+                    id = text;
+                } else if inside_level {
+                    level = match text.as_str() {
+                        "1" => "Critical".to_string(),
+                        "2" => "Error".to_string(),
+                        "3" => "Warning".to_string(),
+                        "0" | "4" => "Information".to_string(),
+                        "5" => "Verbose".to_string(),
+                        _ => format!("Unknown({})", text),
+                    };
+                } else if inside_data {
+                    current_data_value.push_str(&text);
+                }
+            }
+            Ok(XmlEvent::Eof) => break,
+            Err(_) => break,
+            _ => {}
         }
+
+        buf.clear();
     }
+
+    // If we found the provider name, check if it starts with Microsoft-Windows-
+    if source != "<Parse Error>" && source.starts_with("Microsoft-Windows-") {
+        source = source.trim_start_matches("Microsoft-Windows-").to_string();
+    }
+
+    // Format message from event data
+    let message = if !data_map.is_empty() {
+        if source == "Windows Error Reporting" && id == "1001" {
+            // Special handling for Windows Error Reporting events
+            format_wer_event_data_from_map(&data_map)
+        } else {
+            // Generic format for other events
+            data_map
+                .iter()
+                .map(|(name, value)| {
+                    if value.is_empty() {
+                        format!("  {}", name)
+                    } else {
+                        format!("  {}: {}", name, value)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    } else if inside_event_data {
+        "<No Data found>".to_string()
+    } else {
+        "<No EventData found>".to_string()
+    };
+
+    DisplayEvent {
+        level,
+        datetime,
+        source,
+        id,
+        message,
+        raw_data: xml.to_string(),
+    }
+}
+
+/// Formats Windows Error Reporting event data from a data map.
+#[cfg(target_os = "windows")]
+fn format_wer_event_data_from_map(data_map: &std::collections::HashMap<String, String>) -> String {
     let mut result = String::new();
+
     if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType"))
     {
         result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
@@ -126,6 +304,7 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
     if let Some(cab_id) = data_map.get("CabId") {
         result.push_str(&format!("Cab Id: {}\n", cab_id));
     }
+
     result.push_str("\nProblem signature:\n");
     for i in 1..=10 {
         let p_key = format!("P{}", i);
@@ -133,6 +312,7 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
             result.push_str(&format!("P{}: {}\n", i, val));
         }
     }
+
     if let Some(attached_files) = data_map.get("AttachedFiles") {
         result.push_str("\nAttached files:\n");
         for file in attached_files.lines() {
@@ -140,11 +320,13 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
             result.push('\n');
         }
     }
+
     if let Some(store_path) = data_map.get("StorePath") {
         result.push_str("\nThese files may be available here:\n");
         result.push_str(store_path.trim());
         result.push('\n');
     }
+
     if let Some(analysis_symbol) = data_map.get("AnalysisSymbol") {
         result.push_str(&format!("\nAnalysis symbol: {}\n", analysis_symbol));
     }
@@ -163,87 +345,8 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
     if let Some(cab_guid) = data_map.get("CabGuid") {
         result.push_str(&format!("Cab Guid: {}\n", cab_guid));
     }
+
     result.trim_end().to_string()
-}
-
-/// Formats generic event data from a minidom XML element.
-fn format_generic_event_data_minidom(event_data_element: &Element) -> String {
-    event_data_element
-        .children()
-        .filter(|c| c.is("Data", EVENT_XML_NS))
-        .map(|data_el| {
-            let name = data_el.attr("Name").unwrap_or("Data");
-            let value = data_el.text();
-            if value.is_empty() {
-                format!("  {}", name)
-            } else {
-                format!("  {}: {}", name, value)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Parses an event XML string and returns a DisplayEvent struct with extracted data.
-#[cfg(target_os = "windows")]
-fn parse_event_xml(xml: &str) -> DisplayEvent {
-    let root: Result<Element, _> = xml.parse();
-    let mut source = "<Parse Error>".to_string();
-    let mut id = "0".to_string();
-    let mut level = "Unknown".to_string();
-    let mut datetime = String::new();
-    let mut message = "<Parse Error>".to_string();
-    if let Ok(root) = root {
-        if let Some(system) = root.get_child("System", EVENT_XML_NS) {
-            source = system
-                .get_child("Provider", EVENT_XML_NS)
-                .and_then(|prov| get_attr(prov, "Name"))
-                .unwrap_or_else(|| "<Unknown Provider>".to_string());
-            if source.starts_with("Microsoft-Windows-") {
-                source = source.trim_start_matches("Microsoft-Windows-").to_string();
-            }
-            id = get_child_text(system, "EventID");
-            let level_raw = get_child_text(system, "Level");
-            level = match level_raw.as_str() {
-                "1" => "Critical".to_string(),
-                "2" => "Error".to_string(),
-                "3" => "Warning".to_string(),
-                "0" | "4" => "Information".to_string(),
-                "5" => "Verbose".to_string(),
-                _ => format!("Unknown({})", level_raw),
-            };
-            datetime = system
-                .get_child("TimeCreated", EVENT_XML_NS)
-                .and_then(|time_el| get_attr(time_el, "SystemTime"))
-                .map(|time_str| {
-                    chrono::DateTime::parse_from_rfc3339(&time_str)
-                        .map(|dt| {
-                            dt.with_timezone(&Local)
-                                .format("%Y-%m-%d %H:%M:%S")
-                                .to_string()
-                        })
-                        .unwrap_or(time_str)
-                })
-                .unwrap_or_default();
-        }
-        if let Some(event_data) = root.get_child("EventData", EVENT_XML_NS) {
-            message = if source == "Windows Error Reporting" && id == "1001" {
-                format_wer_event_data_minidom(event_data)
-            } else {
-                format_generic_event_data_minidom(event_data)
-            };
-        } else {
-            message = "<No EventData found>".to_string();
-        }
-    }
-    DisplayEvent {
-        level,
-        datetime,
-        source,
-        id,
-        message,
-        raw_data: xml.to_string(),
-    }
 }
 
 /// Represents an event with displayable information.
