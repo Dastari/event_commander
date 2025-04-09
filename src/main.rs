@@ -113,7 +113,8 @@ fn format_wer_event_data_minidom(event_data_element: &Element) -> String {
         }
     }
     let mut result = String::new();
-    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType")) {
+    if let (Some(bucket), Some(bucket_type)) = (data_map.get("Bucket"), data_map.get("BucketType"))
+    {
         result.push_str(&format!("Fault bucket {}, type {}\n", bucket, bucket_type));
     }
     if let Some(event_name) = data_map.get("EventName") {
@@ -501,7 +502,7 @@ struct AppState {
     filter_dialog_source_input: String,
     filter_dialog_filtered_sources: Vec<(usize, String)>,
     filter_dialog_filtered_source_selection: Option<usize>,
-    help_dialog_visible: bool, 
+    help_dialog_visible: bool,
     help_scroll_position: usize,
 }
 
@@ -611,7 +612,7 @@ impl AppState {
             filter_dialog_source_input: String::new(),
             filter_dialog_filtered_sources: Vec::new(),
             filter_dialog_filtered_source_selection: None,
-            help_dialog_visible: false, 
+            help_dialog_visible: false,
             help_scroll_position: 0,
         }
     }
@@ -1006,11 +1007,13 @@ impl AppState {
             .collect();
         if !self.filter_dialog_filtered_sources.is_empty() {
             let current_original_index = self.filter_dialog_source_index;
-            let current_selection_still_valid = self.filter_dialog_filtered_sources
+            let current_selection_still_valid = self
+                .filter_dialog_filtered_sources
                 .iter()
                 .any(|(idx, _)| *idx == current_original_index);
             if current_selection_still_valid {
-                self.filter_dialog_filtered_source_selection = self.filter_dialog_filtered_sources
+                self.filter_dialog_filtered_source_selection = self
+                    .filter_dialog_filtered_sources
                     .iter()
                     .position(|(idx, _)| *idx == current_original_index);
             } else {
@@ -1019,7 +1022,7 @@ impl AppState {
             }
         } else {
             self.filter_dialog_filtered_source_selection = None;
-            self.filter_dialog_source_index = 0; 
+            self.filter_dialog_source_index = 0;
         }
     }
 }
@@ -1069,10 +1072,12 @@ fn centered_fixed_rect(width: u16, height: u16, r: Rect) -> Rect {
 
 /// Renders the entire UI, including the log list, event table, preview panel, dialogs, and help screen.
 fn ui(frame: &mut Frame, app_state: &mut AppState) {
-    let main_layout = Layout::horizontal([Constraint::Max(30), Constraint::Min(0)]).split(frame.size());
+    let main_layout =
+        Layout::horizontal([Constraint::Max(30), Constraint::Min(0)]).split(frame.size());
     let logs_area = main_layout[0];
     let right_pane_area = main_layout[1];
-    let right_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(10)]).split(right_pane_area);
+    let right_layout =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(10)]).split(right_pane_area);
     let events_area = right_layout[0];
     let preview_area = right_layout[1];
     let log_items: Vec<ListItem> = LOG_NAMES.iter().map(|&name| ListItem::new(name)).collect();
@@ -1090,10 +1095,20 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .title("Event Viewer (Local)")
         .title(log_list_help_title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs { Color::Cyan } else { Color::White }));
+        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Logs {
+            Color::Cyan
+        } else {
+            Color::White
+        }));
     let log_list = List::new(log_items)
         .block(log_list_block)
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(if app_state.focus == PanelFocus::Logs { Color::Blue } else { Color::DarkGray }))
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(
+            if app_state.focus == PanelFocus::Logs {
+                Color::Blue
+            } else {
+                Color::DarkGray
+            },
+        ))
         .highlight_symbol("> ");
     let mut log_list_state = ListState::default();
     log_list_state.select(Some(app_state.selected_log_index));
@@ -1116,7 +1131,11 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             ])
         })
         .collect();
-    let sort_indicator = if app_state.sort_descending { " ↓" } else { " ↑" };
+    let sort_indicator = if app_state.sort_descending {
+        " ↓"
+    } else {
+        " ↑"
+    };
     let datetime_header = format!("Date and Time{}", sort_indicator);
     let header_cells = [
         Cell::from("Level"),
@@ -1125,7 +1144,13 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         Cell::from("Event ID"),
     ]
     .into_iter()
-    .map(|cell| cell.style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+    .map(|cell| {
+        cell.style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
     let header = Row::new(header_cells)
         .style(Style::default().bg(Color::DarkGray))
         .height(1);
@@ -1144,9 +1169,19 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         Span::styled("[s]", Style::new().bold().fg(Color::Gray)),
         Span::raw(" sort "),
         Span::styled("[l]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(format!(" level ({}) ", app_state.filter_level.display_name())),
+        Span::raw(format!(
+            " level ({}) ",
+            app_state.filter_level.display_name()
+        )),
         Span::styled("[f]", Style::new().bold().fg(Color::Gray)),
-        Span::raw(format!(" filter ({}) ", if app_state.active_filter.is_some() { "Active" } else { "Inactive" })),
+        Span::raw(format!(
+            " filter ({}) ",
+            if app_state.active_filter.is_some() {
+                "Active"
+            } else {
+                "Inactive"
+            }
+        )),
         Span::styled("[/]", Style::new().bold().fg(Color::Gray)),
         Span::raw(" search "),
         Span::styled("[n]", next_prev_style),
@@ -1162,7 +1197,13 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         .title(format!("Events: {}", app_state.selected_log_name))
         .title(event_table_help_title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Events { Color::Cyan } else { Color::White }));
+        .border_style(
+            Style::default().fg(if app_state.focus == PanelFocus::Events {
+                Color::Cyan
+            } else {
+                Color::White
+            }),
+        );
     let event_table = Table::new(event_rows, widths)
         .header(header)
         .block(event_table_block)
@@ -1174,7 +1215,13 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     let preview_block = Block::default()
         .title("Event Message Preview")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if app_state.focus == PanelFocus::Preview { Color::Cyan } else { Color::White }));
+        .border_style(
+            Style::default().fg(if app_state.focus == PanelFocus::Preview {
+                Color::Cyan
+            } else {
+                Color::White
+            }),
+        );
     let preview_message = if let Some(selected_index) = app_state.table_state.selected() {
         app_state
             .events
@@ -1185,7 +1232,9 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     };
     let message_lines = preview_message.lines().count() as u16;
     let available_height = preview_area.height.saturating_sub(2);
-    app_state.preview_scroll = app_state.preview_scroll.min(message_lines.saturating_sub(available_height));
+    app_state.preview_scroll = app_state
+        .preview_scroll
+        .min(message_lines.saturating_sub(available_height));
     let preview_paragraph = Paragraph::new(preview_message)
         .block(preview_block)
         .wrap(Wrap { trim: true })
@@ -1197,7 +1246,8 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         let version_x = preview_area.right() - version_width - 1;
         let version_y = preview_area.bottom() - 1;
         let version_rect = Rect::new(version_x, version_y, version_width, 1);
-        let version_paragraph = Paragraph::new(version_string).style(Style::default().fg(Color::DarkGray));
+        let version_paragraph =
+            Paragraph::new(version_string).style(Style::default().fg(Color::DarkGray));
         frame.render_widget(version_paragraph, version_rect);
     }
     if let Some(event_details) = &mut app_state.event_details_dialog {
@@ -1239,8 +1289,12 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             let visible_height = event_details.current_visible_height;
             let content = event_details.current_content();
             let content_lines: Vec<&str> = content.lines().collect();
-            let start_line = event_details.scroll_position.min(content_lines.len().saturating_sub(1));
-            let end_line = (start_line + visible_height).min(content_lines.len()).max(start_line);
+            let start_line = event_details
+                .scroll_position
+                .min(content_lines.len().saturating_sub(1));
+            let end_line = (start_line + visible_height)
+                .min(content_lines.len())
+                .max(start_line);
             let visible_content = if content_lines.is_empty() {
                 String::new()
             } else {
@@ -1258,12 +1312,15 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             if content_lines.len() > visible_height {
                 let scroll_info = format!("[{}/{}]", start_line + 1, content_lines.len());
                 let scroll_rect = Rect::new(
-                    content_area.right().saturating_sub(scroll_info.len() as u16 + 1),
+                    content_area
+                        .right()
+                        .saturating_sub(scroll_info.len() as u16 + 1),
                     content_area.y,
                     scroll_info.len() as u16,
                     1,
                 );
-                let scroll_indicator = Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
+                let scroll_indicator =
+                    Paragraph::new(scroll_info).style(Style::default().fg(Color::Blue));
                 frame.render_widget(scroll_indicator, scroll_rect);
             }
         }
@@ -1327,15 +1384,21 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
     }
     if app_state.is_filter_dialog_visible {
         let dialog_width = 60;
-        let list_visible = app_state.filter_dialog_focus == FilterFieldFocus::Source && !app_state.filter_dialog_filtered_sources.is_empty();
+        let list_visible = app_state.filter_dialog_focus == FilterFieldFocus::Source
+            && !app_state.filter_dialog_filtered_sources.is_empty();
         let list_height = if list_visible {
-            5.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
+            5.min(app_state.filter_dialog_filtered_sources.len() as u16)
+                .max(1)
         } else {
             1
         };
         let required_inner_height = 7 + list_height;
         let dialog_height = required_inner_height + 2 + 2;
-        let dialog_area = centered_fixed_rect(dialog_width, dialog_height.min(frame.size().height), frame.size());
+        let dialog_area = centered_fixed_rect(
+            dialog_width,
+            dialog_height.min(frame.size().height),
+            frame.size(),
+        );
         frame.render_widget(Clear, dialog_area);
         let esc_hint_line = Line::from(vec![
             Span::styled("[Esc]", Style::new().bold().fg(Color::Gray)),
@@ -1386,7 +1449,7 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         let source_input_display = if app_state.filter_dialog_focus == FilterFieldFocus::Source {
             format!("{}_", app_state.filter_dialog_source_input)
         } else if app_state.filter_dialog_source_input.is_empty() {
-            "[Any Source]".to_string() 
+            "[Any Source]".to_string()
         } else {
             app_state.filter_dialog_source_input.clone()
         };
@@ -1394,13 +1457,20 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             Paragraph::new(source_input_display).style(source_style),
             source_chunks[1],
         );
-        if app_state.filter_dialog_focus == FilterFieldFocus::Source && !app_state.filter_dialog_filtered_sources.is_empty() {
-            let list_items: Vec<ListItem> = app_state.filter_dialog_filtered_sources
+        if app_state.filter_dialog_focus == FilterFieldFocus::Source
+            && !app_state.filter_dialog_filtered_sources.is_empty()
+        {
+            let list_items: Vec<ListItem> = app_state
+                .filter_dialog_filtered_sources
                 .iter()
                 .map(|(_, name)| ListItem::new(name.clone()))
                 .collect();
             let list = List::new(list_items)
-                .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::Blue))
+                .highlight_style(
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .bg(Color::Blue),
+                )
                 .highlight_symbol("> ");
             let mut list_state = ListState::default();
             list_state.select(app_state.filter_dialog_filtered_source_selection);
@@ -1436,12 +1506,16 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         ]);
         frame.render_widget(Paragraph::new(level_text), chunks[3]);
         let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply {
-            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
         let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear {
-            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
@@ -1469,7 +1543,10 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         let dismiss_text = Line::from(vec![
             Span::styled("[Esc]", Style::default().fg(Color::Gray).bold()),
             Span::raw(" Dismiss "),
-            Span::styled(" ↑↓ PgUp/Dn Home/End ", Style::default().fg(Color::Gray).bold()),
+            Span::styled(
+                " ↑↓ PgUp/Dn Home/End ",
+                Style::default().fg(Color::Gray).bold(),
+            ),
             Span::raw(" Scroll "),
         ])
         .alignment(Alignment::Center);
@@ -1485,7 +1562,10 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         let content_area = help_block.inner(help_area);
         frame.render_widget(help_block, help_area);
         let help_text = vec![
-            Line::from(Span::styled("Event Commander", Style::default().bold().fg(Color::Cyan))), 
+            Line::from(Span::styled(
+                "Event Commander",
+                Style::default().bold().fg(Color::Cyan),
+            )),
             Line::from("A simple TUI for browsing Windows Event Logs."),
             Line::from(""),
             Line::from(vec![
@@ -1494,66 +1574,206 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
             ]),
             Line::from(vec![
                 Span::raw("Source Code: "),
-                Span::styled("https://github.com/Dastari/event_commander", Style::default().fg(Color::Blue).add_modifier(Modifier::UNDERLINED)),
+                Span::styled(
+                    "https://github.com/Dastari/event_commander",
+                    Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::UNDERLINED),
+                ),
             ]),
             Line::from(""),
-            Line::from(Span::styled("License: GPL-3.0-or-later", Style::default().fg(Color::Magenta))),
+            Line::from(Span::styled(
+                "License: GPL-3.0-or-later",
+                Style::default().fg(Color::Magenta),
+            )),
             Line::from("  This program is free software: you can redistribute it and/or modify"),
             Line::from("  it under the terms of the GNU General Public License as published by"),
             Line::from("  the Free Software Foundation, either version 3 of the License, or"),
             Line::from("  (at your option) any later version. See LICENSE.txt for details."),
             Line::from(""),
-            Line::from(Span::styled("--- Keybindings ---", Style::default().bold().fg(Color::Yellow))), 
+            Line::from(Span::styled(
+                "--- Keybindings ---",
+                Style::default().bold().fg(Color::Yellow),
+            )),
             Line::from(""),
-            Line::from(Span::styled("Global:", Style::default().underlined())), 
-            Line::from(vec![Span::styled("  q       ", Style::default().bold()), Span::raw("Quit application")]), 
-            Line::from(vec![Span::styled("  F1      ", Style::default().bold()), Span::raw("Show this help screen")]), 
-            Line::from(vec![Span::styled("  Tab     ", Style::default().bold()), Span::raw("Cycle focus forward (Logs -> Events -> Preview)")]), 
-            Line::from(vec![Span::styled("  S-Tab   ", Style::default().bold()), Span::raw("Cycle focus backward")]), 
+            Line::from(Span::styled("Global:", Style::default().underlined())),
+            Line::from(vec![
+                Span::styled("  q       ", Style::default().bold()),
+                Span::raw("Quit application"),
+            ]),
+            Line::from(vec![
+                Span::styled("  F1      ", Style::default().bold()),
+                Span::raw("Show this help screen"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Tab     ", Style::default().bold()),
+                Span::raw("Cycle focus forward (Logs -> Events -> Preview)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  S-Tab   ", Style::default().bold()),
+                Span::raw("Cycle focus backward"),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("Log List Panel (Left):", Style::default().underlined())), 
-            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Navigate log types")]), 
-            Line::from(vec![Span::styled("  Enter   ", Style::default().bold()), Span::raw("Select log and move focus to Events")]), 
+            Line::from(Span::styled(
+                "Log List Panel (Left):",
+                Style::default().underlined(),
+            )),
+            Line::from(vec![
+                Span::styled("  ↑/↓     ", Style::default().bold()),
+                Span::raw("Navigate log types"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter   ", Style::default().bold()),
+                Span::raw("Select log and move focus to Events"),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("Event Table Panel (Center):", Style::default().underlined())), 
-            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Scroll events line by line")]), 
-            Line::from(vec![Span::styled("  PgUp    ", Style::default().bold()), Span::raw("Scroll events up one page")]), 
-            Line::from(vec![Span::styled("  PgDn    ", Style::default().bold()), Span::raw("Scroll events down one page")]), 
-            Line::from(vec![Span::styled("  Home/g  ", Style::default().bold()), Span::raw("Go to the first event")]), 
-            Line::from(vec![Span::styled("  End/G   ", Style::default().bold()), Span::raw("Go to the last event (loads more if needed)")]), 
-            Line::from(vec![Span::styled("  Enter   ", Style::default().bold()), Span::raw("Show detailed view for selected event")]), 
-            Line::from(vec![Span::styled("  s       ", Style::default().bold()), Span::raw("Toggle sort order (Ascending/Descending)")]), 
-            Line::from(vec![Span::styled("  l       ", Style::default().bold()), Span::raw("Cycle through quick level filters (All -> Info -> Warn -> Err/Crit)")]), 
-            Line::from(vec![Span::styled("  f       ", Style::default().bold()), Span::raw("Open detailed filter dialog")]), 
-            Line::from(vec![Span::styled("  /       ", Style::default().bold()), Span::raw("Start search input")]), 
-            Line::from(vec![Span::styled("  n       ", Style::default().bold()), Span::raw("Find next search match (after search)")]), 
-            Line::from(vec![Span::styled("  p/N     ", Style::default().bold()), Span::raw("Find previous search match (after search)")]), 
+            Line::from(Span::styled(
+                "Event Table Panel (Center):",
+                Style::default().underlined(),
+            )),
+            Line::from(vec![
+                Span::styled("  ↑/↓     ", Style::default().bold()),
+                Span::raw("Scroll events line by line"),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgUp    ", Style::default().bold()),
+                Span::raw("Scroll events up one page"),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgDn    ", Style::default().bold()),
+                Span::raw("Scroll events down one page"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Home/g  ", Style::default().bold()),
+                Span::raw("Go to the first event"),
+            ]),
+            Line::from(vec![
+                Span::styled("  End/G   ", Style::default().bold()),
+                Span::raw("Go to the last event (loads more if needed)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter   ", Style::default().bold()),
+                Span::raw("Show detailed view for selected event"),
+            ]),
+            Line::from(vec![
+                Span::styled("  s       ", Style::default().bold()),
+                Span::raw("Toggle sort order (Ascending/Descending)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  l       ", Style::default().bold()),
+                Span::raw("Cycle through quick level filters (All -> Info -> Warn -> Err/Crit)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  f       ", Style::default().bold()),
+                Span::raw("Open detailed filter dialog"),
+            ]),
+            Line::from(vec![
+                Span::styled("  /       ", Style::default().bold()),
+                Span::raw("Start search input"),
+            ]),
+            Line::from(vec![
+                Span::styled("  n       ", Style::default().bold()),
+                Span::raw("Find next search match (after search)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  p/N     ", Style::default().bold()),
+                Span::raw("Find previous search match (after search)"),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("Event Preview Panel (Bottom Right):", Style::default().underlined())), 
-            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Scroll preview line by line")]), 
-            Line::from(vec![Span::styled("  PgUp    ", Style::default().bold()), Span::raw("Scroll preview up one page")]), 
-            Line::from(vec![Span::styled("  PgDn    ", Style::default().bold()), Span::raw("Scroll preview down one page")]), 
-            Line::from(vec![Span::styled("  Home/g  ", Style::default().bold()), Span::raw("Scroll preview to top")]), 
+            Line::from(Span::styled(
+                "Event Preview Panel (Bottom Right):",
+                Style::default().underlined(),
+            )),
+            Line::from(vec![
+                Span::styled("  ↑/↓     ", Style::default().bold()),
+                Span::raw("Scroll preview line by line"),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgUp    ", Style::default().bold()),
+                Span::raw("Scroll preview up one page"),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgDn    ", Style::default().bold()),
+                Span::raw("Scroll preview down one page"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Home/g  ", Style::default().bold()),
+                Span::raw("Scroll preview to top"),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("Event Details Dialog:", Style::default().underlined())), 
-            Line::from(vec![Span::styled("  Esc     ", Style::default().bold()), Span::raw("Dismiss dialog")]), 
-            Line::from(vec![Span::styled("  v       ", Style::default().bold()), Span::raw("Toggle view (Formatted / Raw XML)")]), 
-            Line::from(vec![Span::styled("  s       ", Style::default().bold()), Span::raw("Save current event XML to disk")]), 
-            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Scroll content line by line")]), 
-            Line::from(vec![Span::styled("  PgUp    ", Style::default().bold()), Span::raw("Scroll content up one page")]), 
-            Line::from(vec![Span::styled("  PgDn    ", Style::default().bold()), Span::raw("Scroll content down one page")]), 
-            Line::from(vec![Span::styled("  Home/g  ", Style::default().bold()), Span::raw("Go to top of content")]), 
-            Line::from(vec![Span::styled("  End/G   ", Style::default().bold()), Span::raw("Go to bottom of content")]), 
+            Line::from(Span::styled(
+                "Event Details Dialog:",
+                Style::default().underlined(),
+            )),
+            Line::from(vec![
+                Span::styled("  Esc     ", Style::default().bold()),
+                Span::raw("Dismiss dialog"),
+            ]),
+            Line::from(vec![
+                Span::styled("  v       ", Style::default().bold()),
+                Span::raw("Toggle view (Formatted / Raw XML)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  s       ", Style::default().bold()),
+                Span::raw("Save current event XML to disk"),
+            ]),
+            Line::from(vec![
+                Span::styled("  ↑/↓     ", Style::default().bold()),
+                Span::raw("Scroll content line by line"),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgUp    ", Style::default().bold()),
+                Span::raw("Scroll content up one page"),
+            ]),
+            Line::from(vec![
+                Span::styled("  PgDn    ", Style::default().bold()),
+                Span::raw("Scroll content down one page"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Home/g  ", Style::default().bold()),
+                Span::raw("Go to top of content"),
+            ]),
+            Line::from(vec![
+                Span::styled("  End/G   ", Style::default().bold()),
+                Span::raw("Go to bottom of content"),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("Filter Dialog:", Style::default().underlined())), 
-            Line::from(vec![Span::styled("  Esc     ", Style::default().bold()), Span::raw("Cancel filtering and close dialog")]), 
-            Line::from(vec![Span::styled("  Tab     ", Style::default().bold()), Span::raw("Cycle focus through fields/buttons")]), 
-            Line::from(vec![Span::styled("  S-Tab   ", Style::default().bold()), Span::raw("Cycle focus backward")]), 
-            Line::from(vec![Span::styled("  Enter   ", Style::default().bold()), Span::raw("Confirm source selection / Apply / Clear")]), 
-            Line::from(vec![Span::styled("  ↑/↓     ", Style::default().bold()), Span::raw("Navigate source list (when Source focused)")]), 
-            Line::from(vec![Span::styled("  ←/→     ", Style::default().bold()), Span::raw("Change Level selection (when Level focused)")]), 
-            Line::from(vec![Span::styled("  Chars   ", Style::default().bold()), Span::raw("Type in Source/EventID fields")]), 
-            Line::from(vec![Span::styled("  Bksp    ", Style::default().bold()), Span::raw("Delete character in Source/EventID fields")]),
+            Line::from(Span::styled(
+                "Filter Dialog:",
+                Style::default().underlined(),
+            )),
+            Line::from(vec![
+                Span::styled("  Esc     ", Style::default().bold()),
+                Span::raw("Cancel filtering and close dialog"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Tab     ", Style::default().bold()),
+                Span::raw("Cycle focus through fields/buttons"),
+            ]),
+            Line::from(vec![
+                Span::styled("  S-Tab   ", Style::default().bold()),
+                Span::raw("Cycle focus backward"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Enter   ", Style::default().bold()),
+                Span::raw("Confirm source selection / Apply / Clear"),
+            ]),
+            Line::from(vec![
+                Span::styled("  ↑/↓     ", Style::default().bold()),
+                Span::raw("Navigate source list (when Source focused)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  ←/→     ", Style::default().bold()),
+                Span::raw("Change Level selection (when Level focused)"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Chars   ", Style::default().bold()),
+                Span::raw("Type in Source/EventID fields"),
+            ]),
+            Line::from(vec![
+                Span::styled("  Bksp    ", Style::default().bold()),
+                Span::raw("Delete character in Source/EventID fields"),
+            ]),
         ];
         let total_lines = help_text.len();
         let visible_height = content_area.height as usize;
@@ -1568,12 +1788,15 @@ fn ui(frame: &mut Frame, app_state: &mut AppState) {
         if total_lines > visible_height {
             let scroll_info = format!("[{}/{}]", current_scroll + 1, total_lines);
             let scroll_rect = Rect::new(
-                content_area.right().saturating_sub(scroll_info.len() as u16 + 1),
+                content_area
+                    .right()
+                    .saturating_sub(scroll_info.len() as u16 + 1),
                 content_area.y,
                 scroll_info.len() as u16,
                 1,
             );
-            let scroll_indicator = Paragraph::new(scroll_info).style(Style::default().fg(Color::Yellow));
+            let scroll_indicator =
+                Paragraph::new(scroll_info).style(Style::default().fg(Color::Yellow));
             frame.render_widget(scroll_indicator, scroll_rect);
         }
     }
@@ -1775,14 +1998,16 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             KeyCode::Enter => match app_state.filter_dialog_focus {
                 FilterFieldFocus::Source => {
                     if let Some(selected_pos) = app_state.filter_dialog_filtered_source_selection {
-                        if let Some((_, name)) = app_state.filter_dialog_filtered_sources.get(selected_pos) {
+                        if let Some((_, name)) =
+                            app_state.filter_dialog_filtered_sources.get(selected_pos)
+                        {
                             app_state.filter_dialog_source_input = name.clone();
                             if let Some(original_sources) = &app_state.available_sources {
                                 if let Some(idx) = original_sources.iter().position(|s| s == name) {
-                                     app_state.filter_dialog_source_index = idx;
+                                    app_state.filter_dialog_source_index = idx;
                                 }
                             }
-                            app_state.update_filtered_sources(); 
+                            app_state.update_filtered_sources();
                         }
                     }
                     app_state.filter_dialog_focus = FilterFieldFocus::EventId;
@@ -1833,7 +2058,8 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                     if !app_state.filter_dialog_filtered_sources.is_empty() {
                         if app_state.filter_dialog_filtered_source_selection.is_none() {
                             app_state.filter_dialog_filtered_source_selection = Some(0);
-                            app_state.filter_dialog_source_index = app_state.filter_dialog_filtered_sources[0].0;
+                            app_state.filter_dialog_source_index =
+                                app_state.filter_dialog_filtered_sources[0].0;
                         }
                     }
                 }
@@ -1851,7 +2077,8 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                     if !app_state.filter_dialog_filtered_sources.is_empty() {
                         if app_state.filter_dialog_filtered_source_selection.is_none() {
                             app_state.filter_dialog_filtered_source_selection = Some(0);
-                            app_state.filter_dialog_source_index = app_state.filter_dialog_filtered_sources[0].0;
+                            app_state.filter_dialog_source_index =
+                                app_state.filter_dialog_filtered_sources[0].0;
                         }
                     }
                 }
@@ -1861,14 +2088,14 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
                 _ => {}
             },
             KeyCode::Left => match app_state.filter_dialog_focus {
-                FilterFieldFocus::Source => {},
+                FilterFieldFocus::Source => {}
                 FilterFieldFocus::Level => {
                     app_state.filter_dialog_level = app_state.filter_dialog_level.previous();
                 }
                 _ => {}
             },
             KeyCode::Right => match app_state.filter_dialog_focus {
-                FilterFieldFocus::Source => {},
+                FilterFieldFocus::Source => {}
                 FilterFieldFocus::Level => {
                     app_state.filter_dialog_level = app_state.filter_dialog_level.next();
                 }
@@ -1877,10 +2104,18 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             KeyCode::Up => match app_state.filter_dialog_focus {
                 FilterFieldFocus::Source => {
                     if !app_state.filter_dialog_filtered_sources.is_empty() {
-                        let current_pos = app_state.filter_dialog_filtered_source_selection.unwrap_or(0);
-                        let new_pos = if current_pos > 0 { current_pos - 1 } else { app_state.filter_dialog_filtered_sources.len() - 1 };
+                        let current_pos = app_state
+                            .filter_dialog_filtered_source_selection
+                            .unwrap_or(0);
+                        let new_pos = if current_pos > 0 {
+                            current_pos - 1
+                        } else {
+                            app_state.filter_dialog_filtered_sources.len() - 1
+                        };
                         app_state.filter_dialog_filtered_source_selection = Some(new_pos);
-                        if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
+                        if let Some(&(idx, _)) =
+                            app_state.filter_dialog_filtered_sources.get(new_pos)
+                        {
                             app_state.filter_dialog_source_index = idx;
                         }
                     }
@@ -1890,10 +2125,19 @@ fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPr
             KeyCode::Down => match app_state.filter_dialog_focus {
                 FilterFieldFocus::Source => {
                     if !app_state.filter_dialog_filtered_sources.is_empty() {
-                        let current_pos = app_state.filter_dialog_filtered_source_selection.unwrap_or(0);
-                        let new_pos = if current_pos + 1 < app_state.filter_dialog_filtered_sources.len() { current_pos + 1 } else { 0 };
+                        let current_pos = app_state
+                            .filter_dialog_filtered_source_selection
+                            .unwrap_or(0);
+                        let new_pos =
+                            if current_pos + 1 < app_state.filter_dialog_filtered_sources.len() {
+                                current_pos + 1
+                            } else {
+                                0
+                            };
                         app_state.filter_dialog_filtered_source_selection = Some(new_pos);
-                        if let Some(&(idx, _)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
+                        if let Some(&(idx, _)) =
+                            app_state.filter_dialog_filtered_sources.get(new_pos)
+                        {
                             app_state.filter_dialog_source_index = idx;
                         }
                     }
@@ -2174,7 +2418,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             }
                         }
                     } else {
-                         app_state.filter_dialog_source_input.clear();
+                        app_state.filter_dialog_source_input.clear();
                     }
                     app_state.filter_dialog_event_id = active.event_id.clone().unwrap_or_default();
                     app_state.filter_dialog_level = active.level;
