@@ -30,7 +30,7 @@ Event Commander is a terminal-based event viewer for Windows, written in Rust. I
       ```
 2.  **Clone the repository:**
     ```bash
-    git clone <repository_url>
+    git clone https://github.com/Dastari/event_commander
     cd event-commander
     ```
 3.  **Build:**
