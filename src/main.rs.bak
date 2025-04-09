@@ -1,6 +1,6 @@
 use chrono::Local;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -536,12 +536,20 @@ impl EventLevelFilter {
     fn display_name(&self) -> &str {
         match self {
             Self::All => "All",
-            Self::Information => "Info",
-            Self::Warning => "Warn",
-            Self::Error => "Error/Crit",
+            Self::Information => "Information",
+            Self::Warning => "Warning",
+            Self::Error => "Error",
         }
     }
-
+    /// Returns the corresponding XPath query filter string.
+    fn to_xpath_query(&self) -> String {
+        match self {
+            Self::All => "*".to_string(),
+            Self::Information => "*[System[Level=0 or Level=4]]".to_string(),
+            Self::Warning => "*[System[Level=3]]".to_string(),
+            Self::Error => "*[System[Level=1 or Level=2]]".to_string(),
+        }
+    }
 }
 
 /// Represents which panel is currently focused in the TUI.
@@ -592,6 +600,44 @@ impl FilterFieldFocus {
     }
 }
 
+/// Represents a key binding with an associated action
+struct KeyAction {
+    key: KeyCode,
+    modifiers: Option<KeyModifiers>,
+    action: Box<dyn Fn(&mut AppState) -> PostKeyPressAction>,
+}
+
+impl KeyAction {
+    fn new<F>(key: KeyCode, action: F) -> Self 
+    where
+        F: Fn(&mut AppState) -> PostKeyPressAction + 'static,
+    {
+        Self {
+            key,
+            modifiers: None,
+            action: Box::new(action),
+        }
+    }
+    
+    fn with_modifiers<F>(key: KeyCode, modifiers: KeyModifiers, action: F) -> Self 
+    where
+        F: Fn(&mut AppState) -> PostKeyPressAction + 'static,
+    {
+        Self {
+            key,
+            modifiers: Some(modifiers),
+            action: Box::new(action),
+        }
+    }
+    
+    fn matches(&self, key: KeyCode, modifiers: KeyModifiers) -> bool {
+        self.key == key && (self.modifiers.is_none() || self.modifiers == Some(modifiers))
+    }
+    
+    fn execute(&self, app_state: &mut AppState) -> PostKeyPressAction {
+        (self.action)(app_state)
+    }
+}
 
 /// Represents actions to be taken after a key press is handled.
 enum PostKeyPressAction {
