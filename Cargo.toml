@@ -10,6 +10,7 @@ quick-xml = { version = "0.31", features = ["serialize"] }
 windows = { version = "0.56.0", features = ["Win32_Foundation", "Win32_System_EventLog"] }
 crossterm = "0.27.0"
 chrono = "0.4"
+lazy_static = "1.4.0"
 
 [profile.release]
 opt-level = 'z' 
