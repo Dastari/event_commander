@@ -304,7 +304,7 @@ fn render_log_tabs(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
 
     let mut tab_spans: Vec<Span> = Vec::new();
     // Add prefix
-    tab_spans.push(Span::styled("Event Logs: ", *DARK_GRAY_FG_STYLE));
+    tab_spans.push(Span::styled(" Event Logs: ", *DARK_GRAY_FG_STYLE));
 
     for (i, log_name) in LOG_NAMES.iter().enumerate() {
         let key_hint = format!("[{}]", i + 1);
@@ -788,7 +788,7 @@ fn render_bottom_bar(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
             // Add Level Filter (with current state)
             spans.push(Span::styled("[l]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(format!(" Lvl ({}) | ", app_state.get_current_level_name())));
             // Add Filter Dialog (with current state)
-            spans.push(Span::styled("[f]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(format!(" Filter ({}) | ", app_state.get_filter_status())));
+            spans.push(Span::styled("[f]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(format!(" Adv Filter ({}) | ", app_state.get_filter_status())));
             // Add Search
             spans.push(Span::styled("[/]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(" Search | "));
             // Add Next/Prev if search active
