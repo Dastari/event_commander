@@ -5,7 +5,7 @@ use ratatui::{
     widgets::block::{Position, Title},
     widgets::{
         Block, Borders, Cell, Clear, List, ListItem, ListState, Paragraph, Row, Table, TableState,
-        Wrap,
+        Wrap, BorderType
     },
 };
 
@@ -17,10 +17,19 @@ const THEME_BG: Color = Color::Blue;
 const THEME_FG: Color = Color::LightCyan;
 const THEME_BORDER: Color = Color::LightCyan;
 const THEME_HIGHLIGHT_BG: Color = Color::Cyan;
-const THEME_HIGHLIGHT_FG: Color = Color::Black;
+const THEME_HIGHLIGHT_FG: Color = THEME_BG;
 const THEME_ALT_FG: Color = Color::LightYellow; // For headers, specific highlights
-const THEME_ERROR_FG: Color = Color::Red;
-const THEME_WARN_FG: Color = Color::Yellow;
+const THEME_ERROR_FG: Color = Color::LightRed;
+const THEME_WARN_FG: Color = Color::LightYellow;
+const THEME_DIALOG_DEFAULT_BG: Color = Color::Cyan;
+const THEME_DIALOG_DEFAULT_FG: Color = Color::Black;
+const THEME_DIALOG_ERROR_BG: Color = Color::Red;
+const THEME_DIALOG_ERROR_FG: Color = Color::LightYellow;
+const THEME_DIALOG_WARN_BG: Color = Color::Yellow;
+const THEME_DIALOG_WARN_FG: Color = Color::LightYellow;
+const THEME_FOOTER_BG: Color = Color::Black;
+const THEME_FOOTER_FG: Color = Color::Gray;
+const BORDER_TYPE_THEME: BorderType = BorderType::Double; // Theme border type
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Keep specific colors if needed, but prefer theme constants
@@ -41,6 +50,10 @@ lazy_static! {
     static ref WARN_FG_STYLE: Style = DEFAULT_STYLE.clone().fg(THEME_WARN_FG);
     static ref TITLE_STYLE: Style = SELECTION_STYLE.clone(); // Cyan bg, Black fg for titles in borders
     static ref DARK_GRAY_FG_STYLE: Style = DEFAULT_STYLE.clone().fg(DARK_GRAY); // For less important info like version
+    static ref FOOTER_STYLE: Style = DEFAULT_STYLE.clone().bg(THEME_FOOTER_BG).fg(THEME_FOOTER_FG);
+    static ref DIALOG_DEFAULT_STYLE: Style = DEFAULT_STYLE.clone().bg(THEME_DIALOG_DEFAULT_BG).fg(THEME_DIALOG_DEFAULT_FG);
+    static ref DIALOG_ERROR_STYLE: Style = DEFAULT_STYLE.clone().bg(THEME_DIALOG_ERROR_BG).fg(THEME_DIALOG_ERROR_FG);
+    static ref DIALOG_WARN_STYLE: Style = DEFAULT_STYLE.clone().bg(THEME_DIALOG_WARN_BG).fg(THEME_DIALOG_WARN_FG);
 
     // --- Component Styles Based on Theme ---
     static ref BOLD_STYLE: Style = DEFAULT_STYLE.clone().add_modifier(Modifier::BOLD);
@@ -71,9 +84,9 @@ lazy_static! {
     // Log List Help Title not needed anymore
 
     static ref EVENT_DETAILS_HELP_LINE: Line<'static> = Line::from(vec![
-        KEY_ESC.clone(), Span::raw(" Dismiss ").style(DEFAULT_STYLE.clone()),
-        KEY_V_TOGGLE.clone(), Span::raw(" Toggle View ").style(DEFAULT_STYLE.clone()),
-        KEY_S_SAVE.clone(), Span::raw(" Save Event to Disk ").style(DEFAULT_STYLE.clone()),
+        KEY_ESC.clone(), Span::raw(" Dismiss ").style(DIALOG_DEFAULT_STYLE.clone()),
+        KEY_V_TOGGLE.clone(), Span::raw(" Toggle View ").style(DIALOG_DEFAULT_STYLE.clone()),
+        KEY_S_SAVE.clone(), Span::raw(" Save Event to Disk ").style(DIALOG_DEFAULT_STYLE.clone()),
     ]).alignment(Alignment::Center);
     static ref EVENT_DETAILS_HELP_TITLE: Title<'static> = Title::from(EVENT_DETAILS_HELP_LINE.clone())
         .position(Position::Bottom).alignment(Alignment::Center);
@@ -152,7 +165,8 @@ fn create_dialog_block(title_text: &str, bottom_title: Title<'static>, border_st
         .title(bottom_title)
         .borders(Borders::ALL)
         .border_style(border_style)
-        .style(DEFAULT_STYLE.clone()) // Set default background/foreground for the block area
+        .border_type(BORDER_TYPE_THEME) // Apply theme border type
+        .style(DEFAULT_STYLE.clone())
 }
 
 /// Renders a scroll indicator `[current/total]` at the top-right of the area.
@@ -222,7 +236,7 @@ pub fn ui(frame: &mut Frame, app_state: &mut AppState) {
 // NEW function to render log tabs horizontally
 fn render_log_tabs(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
     let version_string = format!("v{}", VERSION);
-    let version_title = Title::from(Span::styled(version_string, DARK_GRAY_FG_STYLE.clone()))
+    let version_title = Title::from(Span::styled(version_string, DEFAULT_STYLE.clone()))
         .alignment(Alignment::Right)
         .position(Position::Top);
 
@@ -235,6 +249,7 @@ fn render_log_tabs(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
         .title(version_title)
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE.clone())
+        .border_type(BORDER_TYPE_THEME) // Apply theme border type
         .style(DEFAULT_STYLE.clone()); // Set background for the block area
     frame.render_widget(block.clone(), area);
 
@@ -285,6 +300,7 @@ fn render_event_table(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
         .title(event_table_title)
         .borders(Borders::ALL)
         .border_style(border_style)
+        .border_type(BORDER_TYPE_THEME) // Apply theme border type
         .style(DEFAULT_STYLE.clone());
 
     if app_state.events.is_empty() {
@@ -364,6 +380,7 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .title(title)
         .borders(Borders::ALL)
         .border_style(border_style)
+        .border_type(BORDER_TYPE_THEME) // Apply theme border type
         .style(DEFAULT_STYLE.clone());
 
     let preview_message = if app_state.events.is_empty() {
@@ -391,7 +408,7 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .block(preview_block)
         .wrap(Wrap { trim: true })
         .scroll((app_state.preview_scroll, 0))
-        .style(DEFAULT_STYLE.clone()); // Apply default style
+        .style(DEFAULT_STYLE.clone());
 
     frame.render_widget(preview_paragraph, area);
 }
@@ -416,7 +433,7 @@ fn render_event_details_dialog(frame: &mut Frame, app_state: &mut AppState) {
             let dialog_block = create_dialog_block(
                 &dialog_title_text,
                 EVENT_DETAILS_HELP_TITLE.clone(),
-                BORDER_STYLE.clone(),
+                DIALOG_DEFAULT_STYLE.clone(),
             );
             frame.render_widget(dialog_block.clone(), dialog_area);
             let content_area = dialog_block.inner(dialog_area);
@@ -424,7 +441,7 @@ fn render_event_details_dialog(frame: &mut Frame, app_state: &mut AppState) {
             event_details.current_visible_height = (content_area.height as usize).max(1);
             let visible_height = event_details.current_visible_height;
             let content = event_details.current_content();
-            let content_lines: Vec<Line> = content.lines().map(|l| Line::from(Span::raw(l).style(DEFAULT_STYLE.clone()))).collect();
+            let content_lines: Vec<Line> = content.lines().map(|l| Line::from(Span::raw(l).style(DIALOG_DEFAULT_STYLE.clone()))).collect();
             let total_lines = content_lines.len();
 
             let start_line = event_details.scroll_position.min(total_lines.saturating_sub(1));
@@ -435,7 +452,7 @@ fn render_event_details_dialog(frame: &mut Frame, app_state: &mut AppState) {
 
             let content_paragraph = Paragraph::new(Text::from(content_lines))
                 .wrap(wrap_behavior)
-                .style(DEFAULT_STYLE.clone())
+                .style(DIALOG_DEFAULT_STYLE.clone())
                 .scroll((start_line as u16, 0));
 
             frame.render_widget(content_paragraph, content_area);
@@ -457,20 +474,25 @@ fn render_status_dialog(frame: &mut Frame, app_state: &mut AppState) {
 
             frame.render_widget(Clear, dialog_area);
 
-            let border_color = if status_dialog.is_error { THEME_ERROR_FG } else { GREEN };
+            let (dialog_style, border_color) = if status_dialog.is_error {
+                (DIALOG_ERROR_STYLE.clone(), THEME_ERROR_FG)
+            } else {
+                (DIALOG_DEFAULT_STYLE.clone(), THEME_DIALOG_DEFAULT_BG)
+            };
             let border_style = Style::default().fg(border_color);
 
             let dialog_block = create_dialog_block(
                 &status_dialog.title,
                 STATUS_DISMISS_TITLE.clone(),
                 border_style,
-            );
+            ).style(dialog_style.clone());
+
             frame.render_widget(dialog_block.clone(), dialog_area);
             let content_area = dialog_block.inner(dialog_area);
 
             let message_paragraph = Paragraph::new(status_dialog.message.clone())
                 .wrap(Wrap { trim: true })
-                .style(DEFAULT_STYLE.clone());
+                .style(dialog_style);
             frame.render_widget(message_paragraph, content_area);
         }
     }
@@ -488,6 +510,7 @@ fn render_search_bar(frame: &mut Frame, app_state: &mut AppState) {
             .title(SEARCH_BAR_TITLE.clone())
             .borders(Borders::ALL)
             .border_style(BORDER_STYLE.clone())
+            .border_type(BORDER_TYPE_THEME) // Apply theme border type
             .style(DEFAULT_STYLE.clone());
 
         let search_text = format!(" {}_", app_state.search_term);
@@ -502,15 +525,19 @@ fn render_search_bar(frame: &mut Frame, app_state: &mut AppState) {
 
 fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
     if app_state.is_filter_dialog_visible {
+        // Define max list height for consistent dialog sizing
+        const FILTER_LIST_MAX_HEIGHT: u16 = 5;
         let dialog_width = 60;
         let is_source_focused = app_state.filter_dialog_focus == FilterFieldFocus::Source;
         let list_visible = is_source_focused && !app_state.filter_dialog_filtered_sources.is_empty();
-        let list_height = if list_visible {
-            5.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
+        // Calculate actual list height for rendering/constraint
+        let list_render_height = if list_visible {
+            FILTER_LIST_MAX_HEIGHT.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
         } else {
             0
         };
 
+        // Define heights for calculation
         const SOURCE_LABEL_HEIGHT: u16 = 1;
         const SOURCE_INPUT_HEIGHT: u16 = 1;
         const EVENT_ID_LABEL_HEIGHT: u16 = 1;
@@ -521,9 +548,10 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         const BORDERS_HEIGHT: u16 = 2;
         const INNER_MARGIN_HEIGHT: u16 = 2;
 
+        // Calculate total required height *using the max list height* for consistent sizing
         let total_inner_content_height = SOURCE_LABEL_HEIGHT
             + SOURCE_INPUT_HEIGHT
-            + list_height
+            + FILTER_LIST_MAX_HEIGHT // Use max height for dialog sizing
             + EVENT_ID_LABEL_HEIGHT
             + EVENT_ID_INPUT_HEIGHT
             + LEVEL_SELECT_HEIGHT
@@ -539,52 +567,71 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         );
         frame.render_widget(Clear, dialog_area);
 
+        // Create the block first to get inner_area
         let dialog_block = create_dialog_block(
             "Filter Events",
             FILTER_CANCEL_TITLE.clone(),
             BORDER_STYLE.clone(),
-        );
+        ).style(DIALOG_DEFAULT_STYLE.clone());
         let inner_area = dialog_block.inner(dialog_area);
         frame.render_widget(dialog_block, dialog_area);
 
+        // Layout inside the dialog, use *actual render height* for the list constraint
         let constraints = vec![
             Constraint::Length(SOURCE_LABEL_HEIGHT),
             Constraint::Length(SOURCE_INPUT_HEIGHT),
-            Constraint::Length(list_height),
+            Constraint::Length(list_render_height), // Use actual render height here
             Constraint::Length(EVENT_ID_LABEL_HEIGHT),
             Constraint::Length(EVENT_ID_INPUT_HEIGHT),
             Constraint::Length(LEVEL_SELECT_HEIGHT),
             Constraint::Length(BUTTON_SPACER_HEIGHT),
             Constraint::Length(BUTTON_ROW_HEIGHT),
         ];
+        // Add a Min(0) constraint to take up slack if list is hidden but space was allocated
+        let constraints_with_slack = vec![
+            Constraint::Length(SOURCE_LABEL_HEIGHT),
+            Constraint::Length(SOURCE_INPUT_HEIGHT),
+            Constraint::Length(list_render_height), // Actual list render height
+            Constraint::Length(EVENT_ID_LABEL_HEIGHT),
+            Constraint::Length(EVENT_ID_INPUT_HEIGHT),
+            Constraint::Length(LEVEL_SELECT_HEIGHT),
+            Constraint::Length(BUTTON_SPACER_HEIGHT),
+             // Add slack constraint before buttons
+            Constraint::Min(0), 
+            Constraint::Length(BUTTON_ROW_HEIGHT),
+        ];
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
-            .constraints(constraints)
+            .constraints(constraints_with_slack) // Use layout with slack
             .split(inner_area);
 
+        // Render widgets into chunks - Manual indexing
         let mut chunk_index = 0;
         let num_chunks = chunks.len();
 
-        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Source:").style(DEFAULT_STYLE.clone()), chunks[chunk_index]); chunk_index += 1; }
-        let source_style = if is_source_focused { INPUT_FOCUSED_STYLE.clone() } else { INPUT_UNFOCUSED_STYLE.clone() };
+        let base_text_style = DIALOG_DEFAULT_STYLE.clone();
+
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Source:").style(base_text_style.clone()), chunks[chunk_index]); chunk_index += 1; }
+        let source_style = if is_source_focused { INPUT_FOCUSED_STYLE.clone() } else { base_text_style.clone() };
         let source_input_display = if is_source_focused {
             format!("{}_", app_state.filter_dialog_source_input)
         } else if app_state.filter_dialog_source_input.is_empty() {
             "[Any Source]".to_string()
         } else {
-            app_state.filter_dialog_source_input.clone()
+            format!(" {}", app_state.filter_dialog_source_input)
         };
         if chunk_index < num_chunks { frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[chunk_index]); chunk_index += 1; }
 
         if chunk_index < num_chunks {
              if list_visible {
                  let list_items: Vec<ListItem> = app_state.filter_dialog_filtered_sources.iter()
-                    .map(|(_, name)| ListItem::new(name.clone()))
+                    .map(|(_, name)| ListItem::new(name.clone()).style(base_text_style.clone()))
                     .collect();
                  let list = List::new(list_items)
                     .highlight_style(SELECTION_STYLE.clone())
-                    .style(DEFAULT_STYLE.clone())
+                    .style(base_text_style.clone())
                     .highlight_symbol(" ");
                  let mut list_state = ListState::default();
                  list_state.select(app_state.filter_dialog_filtered_source_selection);
@@ -593,23 +640,21 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
              chunk_index += 1;
         }
 
-        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Event ID:").style(DEFAULT_STYLE.clone()), chunks[chunk_index]); chunk_index += 1; }
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Event ID:").style(base_text_style.clone()), chunks[chunk_index]); chunk_index += 1; }
         let is_eventid_focused = app_state.filter_dialog_focus == FilterFieldFocus::EventId;
-        let event_id_input_style = if is_eventid_focused { INPUT_FOCUSED_STYLE.clone() } else { INPUT_UNFOCUSED_STYLE.clone() };
+        let event_id_input_style = if is_eventid_focused { INPUT_FOCUSED_STYLE.clone() } else { base_text_style.clone() };
         let event_id_text = if is_eventid_focused {
             format!("{}_", app_state.filter_dialog_event_id)
         } else {
-            app_state.filter_dialog_event_id.clone()
+            format!(" {}", app_state.filter_dialog_event_id)
         };
         if chunk_index < num_chunks { frame.render_widget(Paragraph::new(event_id_text).style(event_id_input_style), chunks[chunk_index]); chunk_index += 1; }
 
-        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Level:").style(DEFAULT_STYLE.clone()), chunks[chunk_index]); chunk_index += 1; }
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Level:").style(base_text_style.clone()), chunks[chunk_index]); chunk_index += 1; }
         let is_level_focused = app_state.filter_dialog_focus == FilterFieldFocus::Level;
-        let level_style = if is_level_focused {
-             SELECTION_STYLE.clone()
-        } else { DEFAULT_STYLE.clone() };
+        let level_style = if is_level_focused { SELECTION_STYLE.clone() } else { base_text_style.clone() };
         let level_text = Line::from(vec![
-            Span::raw("Level: ").style(DEFAULT_STYLE.clone()),
+            Span::raw("Level: ").style(base_text_style.clone()),
             Span::styled("< ", ALT_FG_STYLE.clone()),
             Span::styled(app_state.filter_dialog_level.display_name(), level_style),
             Span::styled(" >", ALT_FG_STYLE.clone()),
@@ -619,17 +664,13 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         if chunk_index < num_chunks { chunk_index += 1; }
 
         if chunk_index < num_chunks {
-            let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply {
-                SELECTION_STYLE.clone()
-            } else { DEFAULT_STYLE.clone() };
-            let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear {
-                SELECTION_STYLE.clone()
-            } else { DEFAULT_STYLE.clone() };
+            let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply { SELECTION_STYLE.clone() } else { base_text_style.clone() };
+            let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear { SELECTION_STYLE.clone() } else { base_text_style.clone() };
             let apply_text = Span::styled(" [ Apply ] ", apply_style);
             let clear_text = Span::styled(" [ Clear ] ", clear_style);
-            let button_line = Line::from(vec![apply_text, Span::raw(" "), clear_text])
+            let button_line = Line::from(vec![apply_text, Span::raw(" ").style(base_text_style.clone()), clear_text])
                 .alignment(Alignment::Center);
-            frame.render_widget(Paragraph::new(button_line), chunks[chunk_index]);
+            frame.render_widget(Paragraph::new(button_line).style(base_text_style.clone()), chunks[chunk_index]);
         }
     }
 }
@@ -677,22 +718,23 @@ fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
 fn render_bottom_bar(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
     let mut spans: Vec<Span> = Vec::new();
 
-    spans.push(Span::styled("[q]", KEY_STYLE.clone())); spans.push(Span::raw(" Quit | ").style(DEFAULT_STYLE.clone()));
-    spans.push(Span::styled("[F1]", KEY_STYLE.clone())); spans.push(Span::raw(" Help | ").style(DEFAULT_STYLE.clone()));
+    spans.push(Span::styled("[q]", KEY_STYLE.clone())); spans.push(Span::raw(" Quit | ").style(FOOTER_STYLE.clone()));
+    spans.push(Span::styled("[F1]", KEY_STYLE.clone())); spans.push(Span::raw(" Help | ").style(FOOTER_STYLE.clone()));
 
     match app_state.focus {
         PanelFocus::Events => {
-            spans.push(Span::styled("[s]", KEY_STYLE.clone())); spans.push(Span::raw(" Sort | ").style(DEFAULT_STYLE.clone()));
-            spans.push(Span::styled("[l]", KEY_STYLE.clone())); spans.push(Span::raw(format!(" Lvl ({}) | ", app_state.get_current_level_name())).style(DEFAULT_STYLE.clone()));
-            spans.push(Span::styled("[f]", KEY_STYLE.clone())); spans.push(Span::raw(format!(" Adv Filter ({}) | ", app_state.get_filter_status())).style(DEFAULT_STYLE.clone()));
-            spans.push(Span::styled("[/]", KEY_STYLE.clone())); spans.push(Span::raw(" Search | ").style(DEFAULT_STYLE.clone()));
+            spans.push(Span::styled("[s]", KEY_STYLE.clone())); spans.push(Span::raw(" Sort | ").style(FOOTER_STYLE.clone()));
+            spans.push(Span::styled("[l]", KEY_STYLE.clone())); spans.push(Span::raw(format!(" Lvl ({}) | ", app_state.get_current_level_name())).style(FOOTER_STYLE.clone()));
+            spans.push(Span::styled("[f]", KEY_STYLE.clone())); spans.push(Span::raw(format!(" Adv Filter ({}) | ", app_state.get_filter_status())).style(FOOTER_STYLE.clone()));
+            spans.push(Span::styled("[/]", KEY_STYLE.clone())); spans.push(Span::raw(" Search | ").style(FOOTER_STYLE.clone()));
             if app_state.last_search_term.is_some() {
-                spans.push(Span::styled("[n]", KEY_STYLE.clone())); spans.push(Span::raw(" Next | ").style(DEFAULT_STYLE.clone()));
-                spans.push(Span::styled("[p]", KEY_STYLE.clone())); spans.push(Span::raw(" Prev").style(DEFAULT_STYLE.clone()));
+                spans.push(Span::styled("[n]", KEY_STYLE.clone())); spans.push(Span::raw(" Next | ").style(FOOTER_STYLE.clone()));
+                spans.push(Span::styled("[p]", KEY_STYLE.clone())); spans.push(Span::raw(" Prev").style(FOOTER_STYLE.clone()));
             } else {
                 if let Some(last_span) = spans.last_mut() {
                     if last_span.content == " Search | " {
                          last_span.content = " Search".into();
+                         last_span.style = FOOTER_STYLE.clone(); 
                     }
                 }
             }
@@ -703,11 +745,11 @@ fn render_bottom_bar(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
 
     if app_state.is_loading {
         if !spans.is_empty() && spans.last().map_or(false, |s| !s.content.ends_with(' ')) {
-             spans.push(Span::raw(" | ").style(DEFAULT_STYLE.clone()));
+             spans.push(Span::raw(" | ").style(FOOTER_STYLE.clone()));
         }
         spans.push(Span::styled("Loading...", ALT_FG_STYLE.clone()));
     }
 
     let line = Line::from(spans).alignment(Alignment::Left);
-    frame.render_widget(Paragraph::new(line).style(DEFAULT_STYLE.clone()), area);
+    frame.render_widget(Paragraph::new(line).style(FOOTER_STYLE.clone()), area);
 } 
