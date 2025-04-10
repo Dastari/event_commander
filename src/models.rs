@@ -71,7 +71,6 @@ pub enum EventLevelFilter {
 /// Represents which panel is currently focused in the TUI.
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum PanelFocus {
-    Logs,
     Events,
     Preview,
 }
@@ -309,7 +308,7 @@ impl AppState {
             .open("event_commander.log")
             .ok();
         Self {
-            focus: PanelFocus::Logs,
+            focus: PanelFocus::Events,
             selected_log_index: 0,
             selected_log_name: String::new(),
             events: Vec::new(),

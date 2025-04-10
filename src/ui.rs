@@ -242,18 +242,33 @@ fn get_highlight_bg(focused: bool) -> Style {
 
 /// Render main app UI frame
 pub fn ui(frame: &mut Frame, app_state: &mut AppState) {
-    let main_layout =
-        Layout::horizontal([Constraint::Max(30), Constraint::Min(0)]).split(frame.size());
-    let logs_area = main_layout[0];
-    let right_pane_area = main_layout[1];
-    let right_layout =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(10)]).split(right_pane_area);
-    let events_area = right_layout[0];
-    let preview_area = right_layout[1];
+    // New Layout: Top Tabs (3), Middle (Fill), Bottom Bar (1)
+    let main_chunks = Layout::vertical([
+        Constraint::Length(3), // Top: Log Tabs
+        Constraint::Min(0),    // Middle: Events + Preview
+        Constraint::Length(1), // Bottom: Help Bar
+    ])
+    .split(frame.size());
 
-    render_log_list(frame, app_state, logs_area);
+    let top_area = main_chunks[0];
+    let middle_area = main_chunks[1];
+    let bottom_area = main_chunks[2];
+
+    // Split Middle: Events (Left, 65%), Preview (Right, 35%)
+    let middle_chunks = Layout::horizontal([
+        Constraint::Percentage(65),
+        Constraint::Percentage(35),
+    ])
+    .split(middle_area);
+
+    let events_area = middle_chunks[0];
+    let preview_area = middle_chunks[1];
+
+    // Render Components
+    render_log_tabs(frame, app_state, top_area);
     render_event_table(frame, app_state, events_area);
     render_preview_panel(frame, app_state, preview_area);
+    render_bottom_bar(frame, app_state, bottom_area);
 
     // Render dialogs if they're visible (order matters for layering)
     render_status_dialog(frame, app_state); // Render status/confirm first
@@ -265,49 +280,68 @@ pub fn ui(frame: &mut Frame, app_state: &mut AppState) {
 
 // --- Panel Rendering ---
 
-fn render_log_list(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
-    let is_focused = app_state.focus == PanelFocus::Logs;
-    let log_items: Vec<ListItem> = LOG_NAMES.iter().map(|&name| ListItem::new(name)).collect();
+// NEW function to render log tabs horizontally
+fn render_log_tabs(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
+    // Create version title first
+    let version_string = format!("v{}", VERSION);
+    let version_title = Title::from(Span::styled(version_string, *DARK_GRAY_FG_STYLE))
+        .alignment(Alignment::Right)
+        .position(Position::Top); // Position on the top border
 
-    let log_list_block = Block::default()
-        .title("Event Viewer (Local)")
-        .title(LOG_LIST_HELP_TITLE.clone())
+    // 1. Create the main block with App Title and Version Title
+    let block = Block::default()
+        .title("Event Commander")
+        .title(version_title) // Add version title to the block
         .borders(Borders::ALL)
-        .border_style(get_border_style(is_focused));
+        .border_style(Style::default().fg(WHITE));
+    frame.render_widget(block.clone(), area);
 
-    let log_list = List::new(log_items)
-        .block(log_list_block)
-        .highlight_style(get_highlight_bg(is_focused))
-        .highlight_symbol("> ");
+    // 3. Render Tabs within the block's inner area
+    let inner_area = block.inner(area);
+    if inner_area.height < 1 {
+        return; // Not enough space to render tabs
+    }
 
-    let mut log_list_state = ListState::default();
-    log_list_state.select(Some(app_state.selected_log_index));
-    frame.render_stateful_widget(log_list, area, &mut log_list_state);
+    let mut tab_spans: Vec<Span> = Vec::new();
+    // Add prefix
+    tab_spans.push(Span::styled("Event Logs: ", *DARK_GRAY_FG_STYLE));
+
+    for (i, log_name) in LOG_NAMES.iter().enumerate() {
+        let key_hint = format!("[{}]", i + 1);
+        let is_selected = app_state.selected_log_index == i;
+
+        let style = if is_selected {
+            *HIGHLIGHT_BLUE_BG // Use a background highlight for selected tab
+        } else {
+            *UNFOCUSED_STYLE
+        };
+
+        // Use a more prominent style for the key hint
+        tab_spans.push(Span::styled(key_hint, *BOLD_YELLOW_STYLE));
+        tab_spans.push(Span::raw(":"));
+        tab_spans.push(Span::styled(log_name.to_string(), style));
+        tab_spans.push(Span::raw("  ")); // Spacer
+    }
+
+    let tabs_line = Line::from(tab_spans).alignment(Alignment::Left);
+    let tabs_paragraph = Paragraph::new(tabs_line).block(Block::default());
+
+    // Render tabs centered vertically within the inner area (usually 1 line high)
+    let v_margin = inner_area.height.saturating_sub(1) / 2;
+    let tabs_render_area = Rect {
+        y: inner_area.y + v_margin,
+        height: 1,
+        ..inner_area
+    };
+
+    frame.render_widget(tabs_paragraph, tabs_render_area);
 }
 
 fn render_event_table(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
     let is_focused = app_state.focus == PanelFocus::Events;
 
-    // Dynamic parts of help line
-    let next_prev_style = if app_state.last_search_term.is_some() {
-        *BOLD_GRAY_STYLE
-    } else {
-        *DARK_GRAY_FG_STYLE
-    };
-    let event_table_help_line = Line::from(vec![
-        KEY_S_SORT.clone(), Span::raw(" sort "),
-        KEY_L_LEVEL.clone(), Span::raw(format!(" level ({}) ", app_state.get_current_level_name())),
-        KEY_F_FILTER.clone(), Span::raw(format!(" filter ({}) ", app_state.get_filter_status())),
-        KEY_SLASH_SEARCH.clone(), Span::raw(" search "),
-        Span::styled("[n]", next_prev_style), Span::raw(" next "), // Use local style here
-        Span::styled("[p]", next_prev_style), Span::raw(" prev"), // Use local style here
-    ]).alignment(Alignment::Center);
-    let event_table_help_title = Title::from(event_table_help_line)
-        .position(Position::Bottom).alignment(Alignment::Center);
-
     let event_table_block = Block::default()
         .title(format!("Events: {}", app_state.selected_log_name)) // Dynamic title
-        .title(event_table_help_title)
         .borders(Borders::ALL)
         .border_style(get_border_style(is_focused));
 
@@ -416,17 +450,6 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .scroll((app_state.preview_scroll, 0));
 
     frame.render_widget(preview_paragraph, area);
-
-    // Render version string (static but positioned dynamically)
-    let version_string = format!("v{}", VERSION);
-    let version_width = version_string.len() as u16;
-    if area.width > version_width + 2 && area.height > 1 {
-        let version_x = area.right() - version_width - 1;
-        let version_y = area.bottom() - 1;
-        let version_rect = Rect::new(version_x, version_y, version_width, 1);
-        let version_paragraph = Paragraph::new(version_string).style(*DARK_GRAY_FG_STYLE);
-        frame.render_widget(version_paragraph, version_rect);
-    }
 }
 
 // --- Dialog Rendering ---
@@ -559,62 +582,72 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         let list_height = if list_visible {
             5.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
         } else {
-            0 // No height if not visible or empty
+            0 // Height is 0 when list is not visible
         };
 
-        // Calculate height based on components
-        let source_label_height = 1;
-        let source_input_height = 1;
-        let source_list_height = list_height;
-        let source_area_height = source_label_height + source_input_height + source_list_height;
-        let event_id_label_height = 1;
-        let event_id_input_height = 1;
-        let level_select_height = 1;
-        let button_spacer_height = 1;
-        let button_row_height = 1;
+        // Define heights for calculation (use const for fixed values)
+        const SOURCE_LABEL_HEIGHT: u16 = 1;
+        const SOURCE_INPUT_HEIGHT: u16 = 1;
+        const EVENT_ID_LABEL_HEIGHT: u16 = 1;
+        const EVENT_ID_INPUT_HEIGHT: u16 = 1;
+        const LEVEL_SELECT_HEIGHT: u16 = 1;
+        const BUTTON_SPACER_HEIGHT: u16 = 1; // Use fixed height for spacer
+        const BUTTON_ROW_HEIGHT: u16 = 1;
+        const BORDERS_HEIGHT: u16 = 2;
+        const INNER_MARGIN_HEIGHT: u16 = 2; // Top and bottom margin = 1 each
 
-        let required_inner_height = source_area_height + event_id_label_height + event_id_input_height + level_select_height + button_spacer_height + button_row_height;
-        let dialog_height = required_inner_height + 2 + 1; // +2 borders, +1 margin
+        // Calculate total required height
+        let total_inner_content_height = SOURCE_LABEL_HEIGHT
+            + SOURCE_INPUT_HEIGHT
+            + list_height // Dynamic list height (0 if hidden)
+            + EVENT_ID_LABEL_HEIGHT
+            + EVENT_ID_INPUT_HEIGHT
+            + LEVEL_SELECT_HEIGHT
+            + BUTTON_SPACER_HEIGHT // Use fixed spacer height
+            + BUTTON_ROW_HEIGHT;
+
+        let dialog_height = total_inner_content_height + INNER_MARGIN_HEIGHT + BORDERS_HEIGHT;
 
         let dialog_area = helpers::centered_fixed_rect(
             dialog_width,
-            dialog_height.min(frame.size().height), // Clamp height
+            dialog_height.min(frame.size().height), // Clamp height to screen size
             frame.size(),
         );
         frame.render_widget(Clear, dialog_area);
 
-        // Use helper for block
+        // Create the block first to get inner_area
         let dialog_block = create_dialog_block(
             "Filter Events",
             FILTER_CANCEL_TITLE.clone(),
             *MAGENTA_BORDER_STYLE,
         );
         let inner_area = dialog_block.inner(dialog_area);
-        frame.render_widget(dialog_block.clone(), dialog_area); // Clone for inner calc
+        // Now render the block itself
+        frame.render_widget(dialog_block, dialog_area);
 
-
-        // Layout inside the dialog
+        // Layout inside the dialog, with margin again
         let constraints = vec![
-            Constraint::Length(source_label_height),
-            Constraint::Length(source_input_height),
-            Constraint::Length(source_list_height), // Dynamic list height
-            Constraint::Length(event_id_label_height),
-            Constraint::Length(event_id_input_height),
-            Constraint::Length(level_select_height),
-            Constraint::Min(button_spacer_height), // Spacer
-            Constraint::Length(button_row_height),
+            Constraint::Length(SOURCE_LABEL_HEIGHT),
+            Constraint::Length(SOURCE_INPUT_HEIGHT),
+            Constraint::Length(list_height), // Use dynamic height
+            Constraint::Length(EVENT_ID_LABEL_HEIGHT),
+            Constraint::Length(EVENT_ID_INPUT_HEIGHT),
+            Constraint::Length(LEVEL_SELECT_HEIGHT),
+            Constraint::Length(BUTTON_SPACER_HEIGHT), // Use Fixed Length Spacer
+            Constraint::Length(BUTTON_ROW_HEIGHT),
         ];
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .margin(1) // Margin inside the block
-            .constraints(constraints.iter().filter(|&&c| match c { Constraint::Length(h) => h > 0, _ => true })) // Filter out zero-height constraints
+            .margin(1) // Reintroduce internal margin
+            .constraints(constraints)
             .split(inner_area);
 
+        // Render widgets into chunks - Manual indexing
         let mut chunk_index = 0;
+        let num_chunks = chunks.len();
 
         // Source Field
-        let is_source_focused = app_state.filter_dialog_focus == FilterFieldFocus::Source;
-        frame.render_widget(Paragraph::new("Source:"), chunks[chunk_index]); chunk_index += 1;
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Source:"), chunks[chunk_index]); chunk_index += 1; }
         let source_style = if is_source_focused { *FOCUSED_STYLE } else { *UNFOCUSED_STYLE };
         let source_input_display = if is_source_focused {
             format!("{}_", app_state.filter_dialog_source_input)
@@ -623,71 +656,75 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         } else {
             app_state.filter_dialog_source_input.clone()
         };
-        frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[chunk_index]); chunk_index += 1;
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[chunk_index]); chunk_index += 1; }
 
-        // Source List (if visible)
-        if list_visible {
-            let list_items: Vec<ListItem> = app_state.filter_dialog_filtered_sources.iter()
-                .map(|(_, name)| ListItem::new(name.clone()))
-                .collect();
-            let list = List::new(list_items)
-                .highlight_style(*HIGHLIGHT_BLUE_BG)
-                .highlight_symbol("> ");
-            let mut list_state = ListState::default();
-            list_state.select(app_state.filter_dialog_filtered_source_selection);
-            frame.render_stateful_widget(list, chunks[chunk_index], &mut list_state);
-            chunk_index += 1;
+        // Source List (conditionally rendered and advances index)
+        if chunk_index < num_chunks { // Check if chunk for list exists
+             if list_visible {
+                 let list_items: Vec<ListItem> = app_state.filter_dialog_filtered_sources.iter()
+                    .map(|(_, name)| ListItem::new(name.clone()))
+                    .collect();
+                 let list = List::new(list_items)
+                    .highlight_style(*HIGHLIGHT_BLUE_BG)
+                    .highlight_symbol("> ");
+                 let mut list_state = ListState::default();
+                 list_state.select(app_state.filter_dialog_filtered_source_selection);
+                 // Use frame directly for stateful widget
+                 frame.render_stateful_widget(list, chunks[chunk_index], &mut list_state);
+             } else {
+                 // If list is not visible, but the constraint has height 0, render nothing in its place
+                 // (We don't strictly need to render Clear, just advance index)
+             }
+             // Always advance the index corresponding to the list's constraint
+             chunk_index += 1;
         }
 
         // Event ID Field
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new("Event ID:"), chunks[chunk_index]); chunk_index += 1; }
         let is_eventid_focused = app_state.filter_dialog_focus == FilterFieldFocus::EventId;
-        frame.render_widget(Paragraph::new("Event ID:"), chunks[chunk_index]); chunk_index += 1;
         let event_id_input_style = if is_eventid_focused { *FOCUSED_STYLE } else { *UNFOCUSED_STYLE };
         let event_id_text = if is_eventid_focused {
             format!("{}_", app_state.filter_dialog_event_id)
         } else {
             app_state.filter_dialog_event_id.clone()
         };
-        frame.render_widget(Paragraph::new(event_id_text).style(event_id_input_style), chunks[chunk_index]); chunk_index += 1;
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new(event_id_text).style(event_id_input_style), chunks[chunk_index]); chunk_index += 1; }
 
         // Level Selector
         let is_level_focused = app_state.filter_dialog_focus == FilterFieldFocus::Level;
         let level_style = if is_level_focused {
              FOCUSED_STYLE.clone().add_modifier(Modifier::BOLD)
-        } else {
-            *UNFOCUSED_STYLE
-        };
+        } else { *UNFOCUSED_STYLE };
         let level_text = Line::from(vec![
             Span::raw("Level: "),
             Span::styled("< ", Style::default().fg(YELLOW)),
             Span::styled(app_state.filter_dialog_level.display_name(), level_style),
             Span::styled(" >", Style::default().fg(YELLOW)),
         ]);
-        frame.render_widget(Paragraph::new(level_text), chunks[chunk_index]); chunk_index += 1;
+        if chunk_index < num_chunks { frame.render_widget(Paragraph::new(level_text), chunks[chunk_index]); chunk_index += 1; }
 
+        // Spacer Chunk (Just advance index)
+        if chunk_index < num_chunks { chunk_index += 1; }
 
-        // Spacer (rendered implicitly by Min constraint)
-        //frame.render_widget(Paragraph::new(""), chunks[chunk_index]);
-        chunk_index += 1;
+        // Apply/Clear Buttons (check if chunk exists)
+        if chunk_index < num_chunks {
+            let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply {
+                FOCUSED_STYLE.clone().add_modifier(Modifier::BOLD)
+            } else { *UNFOCUSED_STYLE };
+            let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear {
+                FOCUSED_STYLE.clone().add_modifier(Modifier::BOLD)
+            } else { *UNFOCUSED_STYLE };
+            let apply_text = Span::styled(" [ Apply ] ", apply_style);
+            let clear_text = Span::styled(" [ Clear ] ", clear_style);
 
-
-        // Apply/Clear Buttons
-        let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply {
-            FOCUSED_STYLE.clone().add_modifier(Modifier::BOLD)
-        } else { *UNFOCUSED_STYLE };
-        let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear {
-            FOCUSED_STYLE.clone().add_modifier(Modifier::BOLD)
-        } else { *UNFOCUSED_STYLE };
-        let apply_text = Span::styled(" [ Apply ] ", apply_style);
-        let clear_text = Span::styled(" [ Clear ] ", clear_style);
-
-        let button_layout = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[chunk_index]); // Use the last chunk
-        frame.render_widget(Paragraph::new(apply_text).alignment(Alignment::Center), button_layout[0]);
-        frame.render_widget(Paragraph::new(clear_text).alignment(Alignment::Center), button_layout[1]);
+            let button_layout = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(chunks[chunk_index]); // Use the correct chunk
+            frame.render_widget(Paragraph::new(apply_text).alignment(Alignment::Center), button_layout[0]);
+            frame.render_widget(Paragraph::new(clear_text).alignment(Alignment::Center), button_layout[1]);
+            // chunk_index += 1; // No need to advance further
+        }
     }
 }
-
 
 fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
     if app_state.help_dialog_visible {
@@ -733,4 +770,57 @@ fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
             YELLOW,
         );
     }
+}
+
+// --- Bottom Bar --- NEW FUNCTION
+fn render_bottom_bar(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
+    let mut spans: Vec<Span> = Vec::new();
+
+    // Use BOLD_YELLOW_STYLE for keys
+    spans.push(Span::styled("[q]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(" Quit | "));
+    spans.push(Span::styled("[F1]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(" Help | "));
+
+    // Contextual Keys based on focus
+    match app_state.focus {
+        PanelFocus::Events => {
+            // Add Sort
+            spans.push(Span::styled("[s]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(" Sort | "));
+            // Add Level Filter (with current state)
+            spans.push(Span::styled("[l]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(format!(" Lvl ({}) | ", app_state.get_current_level_name())));
+            // Add Filter Dialog (with current state)
+            spans.push(Span::styled("[f]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(format!(" Filter ({}) | ", app_state.get_filter_status())));
+            // Add Search
+            spans.push(Span::styled("[/]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(" Search | "));
+            // Add Next/Prev if search active
+            if app_state.last_search_term.is_some() {
+                spans.push(Span::styled("[n]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(" Next | "));
+                spans.push(Span::styled("[p]", *BOLD_YELLOW_STYLE)); spans.push(Span::raw(" Prev"));
+            } else {
+                // Remove trailing separator if Next/Prev are not shown
+                if let Some(last_span) = spans.last_mut() {
+                    if last_span.content == " Search | " {
+                         last_span.content = " Search".into();
+                    }
+                }
+            }
+        }
+        PanelFocus::Preview => {
+            // Scroll keys removed
+            // spans.push(Span::styled("[↑↓PgUpDnHm]", *BOLD_GRAY_STYLE)); spans.push(Span::raw(" Scroll Preview"));
+            // Maybe add End/G for preview scroll to bottom later if needed
+        }
+    }
+
+    // Loading Indicator (optional, could be placed elsewhere too)
+    if app_state.is_loading {
+        // Ensure separation if there are previous spans
+        if !spans.is_empty() && spans.last().map_or(false, |s| !s.content.ends_with(' ')) {
+             spans.push(Span::raw(" | "));
+        }
+        spans.push(Span::styled("Loading...", Style::new().fg(YELLOW)));
+    }
+
+    // Combine spans and render directly
+    let line = Line::from(spans).alignment(Alignment::Left);
+    frame.render_widget(Paragraph::new(line), area);
 } 

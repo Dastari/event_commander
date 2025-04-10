@@ -92,9 +92,8 @@ impl AppState {
     /// Cycles the focus among the Logs, Events, and Preview panels.
     pub fn switch_focus(&mut self) {
         self.focus = match self.focus {
-            PanelFocus::Logs => PanelFocus::Events,
             PanelFocus::Events => PanelFocus::Preview,
-            PanelFocus::Preview => PanelFocus::Logs,
+            PanelFocus::Preview => PanelFocus::Events,
         };
     }
     
@@ -204,6 +203,14 @@ impl AppState {
             "No previous matches found (searched from bottom).",
         );
         false
+    }
+    
+    /// Sets the selected log index and clears the active filter.
+    pub fn select_log_index(&mut self, index: usize) {
+        if index < crate::models::LOG_NAMES.len() {
+            self.selected_log_index = index;
+            self.active_filter = None; // Clear filter when changing logs
+        }
     }
     
     /// Updates the filtered source list based on the filter dialog's input.

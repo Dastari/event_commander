@@ -1,59 +1,77 @@
 use crossterm::event::{self, KeyCode, KeyEventKind};
-use crate::models::{AppState, FilterFieldFocus, PanelFocus, PostKeyPressAction, Navigable};
+use crate::models::{AppState, FilterFieldFocus, PanelFocus, PostKeyPressAction, Navigable, LOG_NAMES};
 use crate::helpers;
 use std::fs;
 
 /// Processes a key press event, updates the application state, and returns a PostKeyPressAction.
 pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
+    // --- Early returns for dialogs --- 
     if app_state.help_dialog_visible {
         return handle_help_dialog_keys(key, app_state);
     }
-    
-    match key.code {
-        KeyCode::Char('q') => return PostKeyPressAction::Quit,
-        KeyCode::F(1) => {
-            app_state.help_dialog_visible = true;
-            return PostKeyPressAction::None;
-        }
-        _ => {}
-    }
-    
+
     if let Some(dialog) = &mut app_state.status_dialog {
         if dialog.visible {
             match key.code {
                 KeyCode::Enter | KeyCode::Esc => {
                     dialog.dismiss();
-                    app_state.log("ERROR - Status dialog dismissed.");
+                    app_state.log("Status dialog dismissed.");
                 }
-                _ => {
-                    app_state.log(&format!("Ignored key {:?} in status dialog.", key.code));
-                }
+                _ => { /* Consume key */ }
             }
-            return PostKeyPressAction::None;
+            return PostKeyPressAction::None; // Dialog handled the key
         }
     }
-    
+
     if app_state.is_searching {
-        return handle_search_keys(key, app_state);
+        return handle_search_keys(key, app_state); // Search handles its own keys
     }
-    
-    let mut status_action = PostKeyPressAction::None;
-    
+
     if let Some(dialog) = &mut app_state.event_details_dialog {
         if dialog.visible {
             return handle_event_details_dialog_keys(key, dialog);
         }
     }
-    
+
     if app_state.is_filter_dialog_visible {
         return handle_filter_dialog_keys(key, app_state);
     }
-    
+
+    // --- Global keybindings (only if no dialogs handled input) ---
+    match key.code {
+        KeyCode::Char('q') => return PostKeyPressAction::Quit,
+        KeyCode::F(1) => {
+             app_state.help_dialog_visible = true;
+             return PostKeyPressAction::None;
+        }
+        KeyCode::Char(c @ '1'..='5') => {
+            if let Some(index) = c.to_digit(10).map(|d| d as usize - 1) {
+                if index < LOG_NAMES.len() {
+                    app_state.select_log_index(index);
+                    return PostKeyPressAction::ReloadData;
+                }
+            }
+             // If it's 1-5 but index is invalid, fall through to focus-based handling
+        }
+        KeyCode::Tab => {
+            app_state.switch_focus(); // Cycle between Events and Preview
+            return PostKeyPressAction::None;
+        }
+        KeyCode::BackTab => {
+            app_state.switch_focus(); // Cycle between Events and Preview
+            return PostKeyPressAction::None;
+        }
+        _ => {} // Other keys fall through to focus-based handling
+    }
+
+    // --- Focus-based handling (Events & Preview only) ---
+    // The result of this match is implicitly returned
     match app_state.focus {
-        PanelFocus::Logs => handle_logs_panel_keys(key, app_state),
         PanelFocus::Events => handle_events_panel_keys(key, app_state),
         PanelFocus::Preview => handle_preview_panel_keys(key, app_state),
+        // Note: No PanelFocus::Logs case anymore
     }
+    // No explicit PostKeyPressAction::None needed here
 }
 
 fn handle_help_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
@@ -357,28 +375,6 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
     PostKeyPressAction::None
 }
 
-fn handle_logs_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
-    match key.code {
-        KeyCode::Up => {
-            app_state.previous_log();
-            return PostKeyPressAction::ReloadData;
-        }
-        KeyCode::Down => {
-            app_state.next_log();
-            return PostKeyPressAction::ReloadData;
-        }
-        KeyCode::Right | KeyCode::Tab => {
-            app_state.switch_focus();
-        }
-        KeyCode::Enter => {
-            app_state.switch_focus();
-        }
-        _ => {}
-    }
-    
-    PostKeyPressAction::None
-}
-
 fn handle_events_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
     match key.code {
         KeyCode::Up => {
@@ -401,12 +397,6 @@ fn handle_events_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> P
         }
         KeyCode::Enter => {
             app_state.show_event_details();
-        }
-        KeyCode::Left | KeyCode::BackTab => {
-            app_state.switch_focus();
-        }
-        KeyCode::Tab => {
-            app_state.focus = PanelFocus::Preview;
         }
         KeyCode::Char('s') => {
             app_state.sort_descending = !app_state.sort_descending;
@@ -455,12 +445,6 @@ fn handle_preview_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
         }
         KeyCode::Home | KeyCode::Char('g') => {
             app_state.preview_go_to_top();
-        }
-        KeyCode::Left | KeyCode::BackTab => {
-            app_state.switch_focus();
-        }
-        KeyCode::Tab => {
-            app_state.focus = PanelFocus::Logs;
         }
         KeyCode::F(1) => {
             app_state.help_dialog_visible = true;
