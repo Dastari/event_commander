@@ -202,5 +202,6 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
         id,
         message,
         raw_data: xml.to_string(),
+        formatted_message: None,
     }
 } 

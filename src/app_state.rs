@@ -4,9 +4,18 @@ use chrono::Local;
 use std::io::{Write, BufWriter};
 use std::fs::OpenOptions;
 use std::path::Path;
+use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
-use windows::Win32::System::EventLog::{EvtClose, EVT_HANDLE};
+use windows::{
+    Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, GetLastError},
+    Win32::System::EventLog::{
+        EvtClose, EvtOpenPublisherMetadata, EvtFormatMessage, EvtFormatMessageId, EVT_HANDLE,
+    },
+    core::PCWSTR,
+};
+#[cfg(target_os = "windows")]
+use crate::event_api::to_wide_string;
 
 impl AppState {
     /// Creates a new instance of AppState with default values.
@@ -45,10 +54,13 @@ impl AppState {
             preview_event_id: None,
             preview_formatted_content: None,
             preview_raw_xml: None,
+            preview_friendly_message: None,
             preview_view_mode: PreviewViewMode::default(),
             log_file, // Use the initialized log_file
             #[cfg(target_os = "windows")]
             query_handle: None,
+            #[cfg(target_os = "windows")]
+            publisher_metadata_cache: HashMap::new(), // Initialize cache
             is_loading: false,
             no_more_events: false,
             sort_descending: true,
@@ -119,22 +131,30 @@ impl AppState {
                     event.level, event.datetime, event.source, event.id
                 );
                 formatted_content.push_str("\n--- Message ---\n");
-                formatted_content.push_str(&event.message);
+                // Use original message for constructed view
+                formatted_content.push_str(&event.message); 
                 formatted_content.push('\n');
+
                 self.preview_event_id = Some(format!("{}_{}", event.source, event.id));
                 self.preview_formatted_content = Some(formatted_content);
                 self.preview_raw_xml = Some(event.raw_data.clone());
+                // Copy the (potentially pre-formatted) message
+                self.preview_friendly_message = event.formatted_message.clone(); 
                 self.preview_scroll = 0;
             } else {
+                // Index out of bounds
                 self.preview_event_id = None;
                 self.preview_formatted_content = Some("<Error: Selected index out of bounds>".to_string());
                 self.preview_raw_xml = None;
+                self.preview_friendly_message = None;
                 self.preview_scroll = 0;
             }
         } else {
+            // No selection
             self.preview_event_id = None;
             self.preview_formatted_content = Some("<No event selected>".to_string());
             self.preview_raw_xml = None;
+            self.preview_friendly_message = None;
             self.preview_scroll = 0;
         }
     }
@@ -379,15 +399,20 @@ impl Drop for AppState {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
         {
-            if let Some(handle) = self.query_handle {
+            // Close the main query handle
+            if let Some(handle) = self.query_handle.take() { // Use take to prevent double close
                 unsafe {
                     EvtClose(handle);
-                    // Don't log within drop if log file might be involved in cleanup
-                    // self.log("Closed event query handle.");
                 }
             }
+            // Close all cached publisher metadata handles
+            for (_provider, handle) in self.publisher_metadata_cache.drain() { // Use drain to consume cache
+                unsafe {
+                    EvtClose(handle);
+                }
+            }
+            self.log("Closed Windows event handles.");
         }
-        // Log shutdown *before* flushing/closing the file
         self.log("Application shutting down.");
         if let Some(mut writer) = self.log_file.take() {
              if let Err(e) = writer.flush() {

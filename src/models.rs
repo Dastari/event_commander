@@ -1,7 +1,8 @@
-use chrono::Local;
+// use chrono::Local;
 use ratatui::widgets::TableState;
-use std::io::{Write, BufWriter};
+use std::io::{BufWriter};
 use std::fs::File;
+use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::System::EventLog::EVT_HANDLE;
@@ -15,6 +16,7 @@ pub struct DisplayEvent {
     pub id: String,
     pub message: String,
     pub raw_data: String,
+    pub formatted_message: Option<String>,
 }
 
 /// Represents a status dialog with a title, message, and state flags.
@@ -100,11 +102,14 @@ pub struct AppState {
     pub preview_event_id: Option<String>,
     pub preview_formatted_content: Option<String>,
     pub preview_raw_xml: Option<String>,
+    pub preview_friendly_message: Option<String>,
     pub preview_view_mode: PreviewViewMode,
     // Use BufWriter<File> for buffered logging
     pub log_file: Option<BufWriter<File>>,
     #[cfg(target_os = "windows")]
     pub query_handle: Option<EVT_HANDLE>,
+    #[cfg(target_os = "windows")] // Cache for publisher metadata handles
+    pub publisher_metadata_cache: HashMap<String, EVT_HANDLE>,
     pub is_loading: bool,
     pub no_more_events: bool,
     pub sort_descending: bool,

@@ -16,6 +16,7 @@ use crate::models::{AppState, FilterFieldFocus, PanelFocus, LOG_NAMES, PreviewVi
 const THEME_BG: Color = Color::Blue;
 const THEME_FG: Color = Color::White;
 const THEME_BORDER: Color = Color::LightCyan;
+const THEME_FOCUSED_BORDER: Color = Color::LightYellow;
 const THEME_HIGHLIGHT_BG: Color = Color::Cyan;
 const THEME_HIGHLIGHT_FG: Color = THEME_BG;
 const THEME_ALT_FG: Color = Color::LightYellow;
@@ -230,7 +231,7 @@ fn render_log_tabs(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
 
 fn render_event_table(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
     let is_focused = app_state.focus == PanelFocus::Events;
-    let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { WHITE } else { THEME_BORDER }));
+    let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { THEME_FOCUSED_BORDER } else { THEME_BORDER }));
 
     let block = Block::new()
         .title(Title::from(Span::styled(format!(" Events: {} ", app_state.selected_log_name), *TITLE_STYLE)).alignment(Alignment::Left).position(Position::Top))
@@ -290,32 +291,36 @@ fn render_event_table(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
 
 fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
     let is_focused = app_state.focus == PanelFocus::Preview;
-    let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { WHITE } else { THEME_BORDER }));
+    let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { THEME_FOCUSED_BORDER } else { THEME_BORDER }));
 
     let mut title_text: String;
-    let mut content_to_display: String;
-    let mut wrap_behavior: Wrap;
-    let mut total_lines: usize = 0;
+    let content_to_display: String;
+    let wrap_behavior: Wrap;
+    let total_lines: usize;
 
     match app_state.preview_view_mode {
         PreviewViewMode::Formatted => {
             title_text = " Event Details (Formatted) ".to_string();
-            content_to_display = app_state.preview_formatted_content.clone()
-                .unwrap_or_else(|| "<No event selected or error loading details>".to_string());
+            if let Some(friendly_msg) = &app_state.preview_friendly_message {
+                 content_to_display = friendly_msg.clone();
+            } else if let Some(constructed_msg) = &app_state.preview_formatted_content {
+                 content_to_display = constructed_msg.clone();
+                 title_text = " Event Details (Constructed) ".to_string();
+             } else {
+                 content_to_display = "<No event selected or error loading details>".to_string();
+             }
             wrap_behavior = Wrap { trim: true };
         }
         PreviewViewMode::RawXml => {
             title_text = " Event Details (Raw XML) ".to_string();
             match &app_state.preview_raw_xml {
                 Some(raw_xml) => {
-                    // Attempt to pretty-print the XML
                     match helpers::pretty_print_xml(raw_xml) {
                         Ok(pretty_xml) => {
                             content_to_display = pretty_xml;
-                            title_text = " Event Details (Pretty XML) ".to_string(); // Update title
+                            title_text = " Event Details (Pretty XML) ".to_string();
                         }
                         Err(e) => {
-                            // If pretty-printing fails, show raw XML with an error message
                             content_to_display = format!(
                                 "<Failed to pretty-print XML: {}. Displaying raw XML.>\n\n{}",
                                 e,
@@ -329,11 +334,9 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
                     content_to_display = "<No event selected or raw XML unavailable>".to_string();
                 }
             }
-            // XML should generally not be wrapped, allow horizontal scrolling
             wrap_behavior = Wrap { trim: false };
         }
     }
-    // Calculate total lines *after* potentially pretty-printing
     total_lines = content_to_display.lines().count();
 
     let block = Block::new()
@@ -346,7 +349,6 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let inner_content_area = block.inner(area);
     let available_height = inner_content_area.height;
 
-    // Clamp scroll based on the final content's line count
     if total_lines > 0 {
         let max_scroll = total_lines.saturating_sub(available_height as usize).max(0);
         app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
@@ -354,7 +356,6 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
          app_state.preview_scroll = 0;
     }
 
-    // Use horizontal scroll offset = 0 for now. Add if needed later.
     let scroll_offset = (app_state.preview_scroll as u16, 0);
 
     let preview_paragraph = Paragraph::new(content_to_display)
@@ -365,7 +366,6 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     frame.render_widget(block, area);
     frame.render_widget(preview_paragraph, inner_content_area);
 
-    // Render scroll indicator based on final line count
      if total_lines > available_height as usize {
          render_scroll_indicator(frame, inner_content_area, app_state.preview_scroll + 1, total_lines, *TITLE_STYLE);
      }

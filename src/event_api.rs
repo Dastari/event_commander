@@ -7,6 +7,7 @@ use windows::{
     Win32::System::EventLog::{
         EVT_HANDLE, EvtClose, EvtNext, EvtNextPublisherId, EvtOpenPublisherEnum, EvtQuery,
         EvtQueryChannelPath, EvtQueryReverseDirection, EvtRender, EvtRenderEventXml,
+        EvtOpenPublisherMetadata, EvtFormatMessage, EvtFormatMessageId,
     },
     core::PCWSTR,
 };
@@ -289,7 +290,11 @@ impl AppState {
                     for i in 0..(fetched as usize) {
                         let event_handle = events_buffer[i];
                         if let Some(xml) = render_event_xml(event_handle) {
-                            self.events.push(parse_event_xml(&xml));
+                            let mut display_event = parse_event_xml(&xml);
+                            // Format message using the cache-aware function
+                            let provider_name = display_event.source.clone(); // Clone needed for borrow checker with self
+                            display_event.formatted_message = format_event_message(self, &provider_name, event_handle);
+                            self.events.push(display_event);
                             new_events_fetched += 1;
                         }
                         let _ = EvtClose(event_handle);
@@ -342,6 +347,88 @@ impl AppState {
         } else {
             // If no active filter, return all events
             "*".to_string()
+        }
+    }
+}
+
+/// Formats the friendly message string for an event using EvtFormatMessage, utilizing a cache for publisher metadata handles.
+#[cfg(target_os = "windows")]
+pub fn format_event_message(
+    app_state: &mut AppState, // Pass AppState for cache access
+    provider_name: &str,
+    event_handle: EVT_HANDLE,
+) -> Option<String> {
+    let provider_name_key = provider_name.to_string();
+    let mut publisher_metadata: Option<EVT_HANDLE> = None;
+    let mut opened_new_handle = false;
+
+    unsafe {
+        if let Some(cached_handle) = app_state.publisher_metadata_cache.get(&provider_name_key) {
+            publisher_metadata = Some(*cached_handle);
+        } else {
+            match EvtOpenPublisherMetadata(
+                None, 
+                PCWSTR::from_raw(to_wide_string(provider_name).as_ptr()),
+                None,
+                0, 
+                0, 
+            ) {
+                Ok(handle) if !handle.is_invalid() => {
+                    publisher_metadata = Some(handle);
+                    app_state.publisher_metadata_cache.insert(provider_name_key.clone(), handle);
+                    opened_new_handle = true;
+                }
+                Ok(_) => { /* Invalid handle opened */ }
+                Err(_e) => {
+                    // REMOVED: Logging for failed EvtOpenPublisherMetadata
+                    // app_state.log(&format!("Failed to open publisher metadata for '{}': {}", provider_name, _e));
+                 }
+            }
+        }
+
+        if let Some(handle_to_use) = publisher_metadata {
+            let mut buffer_size_needed = 0;
+            let flags = EvtFormatMessageId.0;
+            let format_result = EvtFormatMessage(
+                 handle_to_use, event_handle, 0, None, flags, None, &mut buffer_size_needed
+             );
+
+            let message = if let Err(e) = format_result {
+                if e.code() == ERROR_INSUFFICIENT_BUFFER.into() && buffer_size_needed > 0 {
+                    let mut buffer: Vec<u16> = vec![0; buffer_size_needed as usize];
+                    if EvtFormatMessage(
+                         handle_to_use, event_handle, 0, None, flags, Some(buffer.as_mut_slice()), &mut buffer_size_needed
+                    ).is_ok() {
+                        let null_pos = buffer.iter().position(|&c| c == 0).unwrap_or(buffer_size_needed as usize);
+                        let formatted_msg = String::from_utf16_lossy(&buffer[..null_pos]);
+                        // REMOVED: Logging for successful message formatting
+                        // app_state.log(&format!(
+                        //     "Successfully formatted message for provider '{}': [{}]", 
+                        //     provider_name, 
+                        //     formatted_msg.trim()
+                        // ));
+                        Some(formatted_msg)
+                    } else {
+                        // REMOVED: Logging for EvtFormatMessage failure (2nd call)
+                        // app_state.log(&format!("EvtFormatMessage failed (2nd call) for provider '{}'", provider_name));
+                        None
+                    }
+                } else {
+                    // REMOVED: Logging for EvtFormatMessage failure (1st call)
+                    // app_state.log(&format!("EvtFormatMessage failed (1st call) for provider '{}': {}", provider_name, e));
+                    None
+                }
+            } else {
+                None
+            };
+            
+             if opened_new_handle {
+                 // Handle remains cached, not closed here.
+             }
+            
+            message
+        } else {
+            None
         }
     }
 } 
