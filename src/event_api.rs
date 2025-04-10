@@ -1,4 +1,4 @@
-use chrono::Local;
+// use chrono::Local; // Removed
 use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
@@ -11,7 +11,7 @@ use windows::{
     core::PCWSTR,
 };
 
-use crate::models::{AppState, DisplayEvent, EventLevelFilter, LOG_NAMES};
+use crate::models::{AppState, EventLevelFilter, LOG_NAMES};
 use crate::event_parser::parse_event_xml;
 
 /// Converts a string slice to a null-terminated wide UTF-16 encoded vector.

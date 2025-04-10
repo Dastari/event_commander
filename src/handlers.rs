@@ -1,11 +1,11 @@
-use crossterm::event::{self, KeyCode, KeyEventKind};
-use crate::models::{AppState, FilterFieldFocus, PanelFocus, PostKeyPressAction, Navigable, LOG_NAMES};
+use crossterm::event::{self, KeyCode};
+use crate::models::{AppState, FilterFieldFocus, PanelFocus, PostKeyPressAction, LOG_NAMES, PreviewViewMode};
 use crate::helpers;
 use std::fs;
 
 /// Processes a key press event, updates the application state, and returns a PostKeyPressAction.
 pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
-    // --- Early returns for dialogs --- 
+    // --- Early returns for dialogs ---
     if app_state.help_dialog_visible {
         return handle_help_dialog_keys(key, app_state);
     }
@@ -25,12 +25,6 @@ pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostK
 
     if app_state.is_searching {
         return handle_search_keys(key, app_state); // Search handles its own keys
-    }
-
-    if let Some(dialog) = &mut app_state.event_details_dialog {
-        if dialog.visible {
-            return handle_event_details_dialog_keys(key, dialog);
-        }
     }
 
     if app_state.is_filter_dialog_visible {
@@ -53,12 +47,16 @@ pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostK
             }
              // If it's 1-5 but index is invalid, fall through to focus-based handling
         }
-        KeyCode::Tab => {
+        KeyCode::Tab | KeyCode::Right => {
             app_state.switch_focus(); // Cycle between Events and Preview
             return PostKeyPressAction::None;
         }
-        KeyCode::BackTab => {
-            app_state.switch_focus(); // Cycle between Events and Preview
+        KeyCode::BackTab | KeyCode::Left => {
+            if app_state.focus == PanelFocus::Preview {
+                 app_state.focus = PanelFocus::Events;
+            } else {
+                app_state.switch_focus(); // Should cycle back from Events to Preview
+            }
             return PostKeyPressAction::None;
         }
         _ => {} // Other keys fall through to focus-based handling
@@ -69,9 +67,7 @@ pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostK
     match app_state.focus {
         PanelFocus::Events => handle_events_panel_keys(key, app_state),
         PanelFocus::Preview => handle_preview_panel_keys(key, app_state),
-        // Note: No PanelFocus::Logs case anymore
     }
-    // No explicit PostKeyPressAction::None needed here
 }
 
 fn handle_help_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
@@ -131,84 +127,8 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
     PostKeyPressAction::None
 }
 
-fn handle_event_details_dialog_keys(
-    key: event::KeyEvent, 
-    dialog: &mut crate::models::EventDetailsDialog,
-) -> PostKeyPressAction {
-    let mut status_action = PostKeyPressAction::None;
-    
-    match key.code {
-        KeyCode::Esc => {
-            dialog.dismiss();
-        }
-        KeyCode::Char('v') => {
-            dialog.toggle_view();
-        }
-        KeyCode::Char('s') => {
-            let filename = format!(
-                "{}-{}-{}-{}.xml",
-                helpers::sanitize_filename(&dialog.log_name),
-                helpers::sanitize_filename(&dialog.event_id),
-                dialog.event_datetime.replace(':', "-").replace(' ', "_"),
-                helpers::sanitize_filename(&dialog.event_source)
-            );
-            match helpers::pretty_print_xml(&dialog.raw_xml) {
-                Ok(pretty_xml) => match fs::write(&filename, &pretty_xml) {
-                    Ok(_) => {
-                        status_action = PostKeyPressAction::ShowConfirmation(
-                            "Save Successful".to_string(),
-                            format!("Event saved to:\n{}", filename),
-                        );
-                        dialog.dismiss();
-                    }
-                    Err(e) => {
-                        let err_msg =
-                            format!("Failed to save event to {}: {}", filename, e);
-                        status_action = PostKeyPressAction::ShowConfirmation(
-                            "Save Failed".to_string(),
-                            err_msg,
-                        );
-                    }
-                },
-                Err(err_msg) => {
-                    let log_msg = format!("Failed to format XML for saving: {}", err_msg);
-                    status_action = PostKeyPressAction::ShowConfirmation(
-                        "Save Failed".to_string(),
-                        log_msg,
-                    );
-                }
-            }
-        }
-        KeyCode::Up => {
-            dialog.scroll_up();
-        }
-        KeyCode::Down => {
-            dialog.scroll_down(dialog.current_visible_height);
-        }
-        KeyCode::PageUp => {
-            dialog.page_up();
-        }
-        KeyCode::PageDown => {
-            dialog.page_down(dialog.current_visible_height);
-        }
-        KeyCode::Home | KeyCode::Char('g') => {
-            dialog.go_to_top();
-        }
-        KeyCode::End | KeyCode::Char('G') => {
-            dialog.go_to_bottom(dialog.current_visible_height);
-        }
-        _ => {}
-    }
-    
-    status_action
-}
-
 fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
-    app_state.log(&format!(
-        "Filter Dialog Key: {:?}, Focus: {:?}",
-        key.code, app_state.filter_dialog_focus
-    ));
-    
+  
     match key.code {
         KeyCode::Esc => {
             app_state.is_filter_dialog_visible = false;
@@ -377,31 +297,13 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
 
 fn handle_events_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
     match key.code {
-        KeyCode::Up => {
-            app_state.scroll_up();
-        }
-        KeyCode::Down => {
-            app_state.scroll_down();
-        }
-        KeyCode::PageUp => {
-            app_state.page_up();
-        }
-        KeyCode::PageDown => {
-            app_state.page_down();
-        }
-        KeyCode::Home | KeyCode::Char('g') => {
-            app_state.go_to_top();
-        }
-        KeyCode::End | KeyCode::Char('G') => {
-            app_state.go_to_bottom();
-        }
-        KeyCode::Enter => {
-            app_state.show_event_details();
-        }
-        KeyCode::Char('s') => {
-            app_state.sort_descending = !app_state.sort_descending;
-            return PostKeyPressAction::ReloadData;
-        }
+        KeyCode::Down => app_state.scroll_down(),
+        KeyCode::Up => app_state.scroll_up(),
+        KeyCode::PageDown => app_state.page_down(),
+        KeyCode::PageUp => app_state.page_up(),
+        KeyCode::Home | KeyCode::Char('g') => app_state.go_to_top(),
+        KeyCode::End | KeyCode::Char('G') => app_state.go_to_bottom(),
+        KeyCode::Char('s') => app_state.sort_descending = !app_state.sort_descending,
         KeyCode::Char('l') => {
             app_state.update_level_filter();
             return PostKeyPressAction::ReloadData;
@@ -411,47 +313,104 @@ fn handle_events_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> P
         }
         KeyCode::Char('/') => {
             app_state.is_searching = true;
-            app_state.search_term.clear();
         }
         KeyCode::Char('n') => {
-            if app_state.last_search_term.is_some() {
-                let _ = app_state.find_next_match();
+            match app_state.find_next_match() {
+                Ok(_) => {},
+                Err(msg) => return PostKeyPressAction::ShowConfirmation("Search Failed".to_string(), msg),
             }
         }
-        KeyCode::Char('p') | KeyCode::Char('N') => {
-            if app_state.last_search_term.is_some() {
-                let _ = app_state.find_previous_match();
+        KeyCode::Char('p') => {
+            match app_state.find_previous_match() {
+                 Ok(_) => {},
+                 Err(msg) => return PostKeyPressAction::ShowConfirmation("Search Failed".to_string(), msg),
+             }
+        }
+        KeyCode::Enter => {
+            if app_state.table_state.selected().is_some() {
+                app_state.focus = PanelFocus::Preview;
+            } else {
+                app_state.show_confirmation("No Selection", "Please select an event first.");
             }
         }
         _ => {}
     }
-    
     PostKeyPressAction::None
 }
 
 fn handle_preview_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
     match key.code {
-        KeyCode::Up => {
-            app_state.preview_scroll_up(1);
+        KeyCode::Esc | KeyCode::Left => {
+            app_state.focus = PanelFocus::Events;
         }
-        KeyCode::Down => {
-            app_state.preview_scroll_down(1);
+        KeyCode::Char('v') => {
+            app_state.preview_view_mode = match app_state.preview_view_mode {
+                PreviewViewMode::Formatted => PreviewViewMode::RawXml,
+                PreviewViewMode::RawXml => PreviewViewMode::Formatted,
+            };
+            app_state.preview_scroll = 0;
         }
-        KeyCode::PageUp => {
-            app_state.preview_scroll_up(10);
+        KeyCode::Char('s') => {
+            if let (Some(raw_xml), Some(event_id)) = (
+                &app_state.preview_raw_xml,
+                app_state.table_state.selected().and_then(|idx| app_state.events.get(idx)),
+            ) {
+                let xml_content = raw_xml.clone();
+                let filename = format!(
+                    "{}-{}-{}-{}.xml",
+                    helpers::sanitize_filename(&app_state.selected_log_name),
+                    helpers::sanitize_filename(&event_id.id),
+                    event_id.datetime.replace(':', "-").replace(' ', "_"),
+                    helpers::sanitize_filename(&event_id.source)
+                );
+                
+                match helpers::pretty_print_xml(&xml_content) {
+                    Ok(pretty_xml) => match fs::write(&filename, &pretty_xml) {
+                        Ok(_) => {
+                           return PostKeyPressAction::ShowConfirmation(
+                                "Save Successful".to_string(),
+                                format!("Event saved to:\\n{}", filename),
+                            );
+                        }
+                        Err(e) => {
+                            let err_msg = format!("Failed to save event to {}: {}", filename, e);
+                            app_state.log(&format!("Save error: {}", e));
+                            return PostKeyPressAction::ShowConfirmation("Save Failed".to_string(), err_msg);
+                        }
+                    },
+                    Err(e) => {
+                         app_state.log(&format!("Failed to pretty print XML for saving ({}). Saving raw.", e));
+                         match fs::write(&filename, &xml_content) {
+                            Ok(_) => {
+                                return PostKeyPressAction::ShowConfirmation(
+                                    "Save Successful (Raw)".to_string(),
+                                    format!("Event saved (raw XML) to:\\n{}", filename),
+                                );
+                            }
+                            Err(e) => {
+                                let err_msg = format!("Failed to save raw event to {}: {}", filename, e);
+                                app_state.log(&format!("Raw save error: {}", e));
+                                return PostKeyPressAction::ShowConfirmation("Save Failed".to_string(), err_msg);
+                            }
+                        }
+                    }
+                }
+            } else {
+                return PostKeyPressAction::ShowConfirmation(
+                    "Save Failed".to_string(),
+                    "No event selected or raw XML data unavailable to save.".to_string(),
+                );
+            }
         }
-        KeyCode::PageDown => {
-            app_state.preview_scroll_down(10);
-        }
-        KeyCode::Home | KeyCode::Char('g') => {
-            app_state.preview_go_to_top();
-        }
-        KeyCode::F(1) => {
-            app_state.help_dialog_visible = true;
-            return PostKeyPressAction::None;
+        KeyCode::Down => app_state.preview_scroll_down(1),
+        KeyCode::Up => app_state.preview_scroll_up(1),
+        KeyCode::PageDown => app_state.preview_scroll_down(10),
+        KeyCode::PageUp => app_state.preview_scroll_up(10),
+        KeyCode::Home | KeyCode::Char('g') => app_state.preview_go_to_top(),
+        KeyCode::End | KeyCode::Char('G') => {
+            app_state.preview_scroll_down(usize::MAX as u16 / 2);
         }
         _ => {}
     }
-    
     PostKeyPressAction::None
-} 
+}
