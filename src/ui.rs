@@ -158,25 +158,22 @@ fn render_scroll_indicator(
     frame: &mut Frame,
     area: Rect,
     current_line: usize,
-    total_lines: usize, // Now represents actual or estimated visual lines
+    total_lines: usize,
     style: Style,
 ) {
-    // Only show indicator if height > 0 and width allows it
     if area.height == 0 || area.width < 5 || total_lines == 0 {
         return;
     }
 
-    // Ensure current_line doesn't exceed total_lines visually
     let display_current = current_line.min(total_lines);
     let scroll_info = format!("[{}/{}]", display_current, total_lines);
 
     let indicator_width = scroll_info.len() as u16;
-    // Ensure indicator doesn't overflow available width
     if indicator_width > area.width {
         return;
     }
     let x_pos = area.right().saturating_sub(indicator_width);
-    let y_pos = area.y; // Position at the top of the content area
+    let y_pos = area.y;
     let scroll_rect = Rect::new(x_pos, y_pos, indicator_width, 1);
     frame.render_widget(Paragraph::new(scroll_info).style(style), scroll_rect);
 }
@@ -319,7 +316,7 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
              } else {
                  content_to_display = "<No event selected or error loading details>".to_string();
              }
-            wrap_behavior = Wrap { trim: true }; // Wrap is ON for formatted
+            wrap_behavior = Wrap { trim: true };
         }
         PreviewViewMode::RawXml => {
             title_text = " Event Details (Raw XML) ".to_string();
@@ -344,10 +341,11 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
                     content_to_display = "<No event selected or raw XML unavailable>".to_string();
                 }
             }
-            wrap_behavior = Wrap { trim: false }; // Wrap is ON for XML
+            wrap_behavior = Wrap { trim: false };
         }
     }
-    let display_lines_count = content_to_display.lines().count(); // Actual lines based on \n
+    let display_lines_count = content_to_display.lines().count();
+
     let block = Block::new()
         .title(Title::from(Span::styled(title_text, *TITLE_STYLE)).alignment(Alignment::Left).position(Position::Top))
         .borders(Borders::ALL)
@@ -359,34 +357,23 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let available_height = inner_content_area.height as usize;
     let available_width = inner_content_area.width as usize;
 
-    // Calculate effective total lines for scroll limiting by estimating wrapped lines
     let effective_total_lines = if available_width > 0 {
-        // Approximate visual lines for wrapped content
         let mut total_wrapped_lines = 0;
         for line in content_to_display.lines() {
-            // Use chars().count() for better unicode handling
             let char_count = line.chars().count();
-            // Estimate lines needed for this specific line based on width
-            // Use max(1) to count empty lines as 1 visual line
-            // Add a small multiplier to be more conservative in estimating wraps
             let lines_needed = (((char_count.max(1)) as f32 / available_width as f32) * 1.2).ceil() as usize;
             total_wrapped_lines += lines_needed;
         }
         total_wrapped_lines
     } else {
-        // Use actual line count when width is not available
         display_lines_count
     };
 
-    // Apply scroll limit based on effective total lines
     if effective_total_lines > 0 && available_height > 0 {
-        // Calculate base max_scroll based on estimation
         let base_max_scroll = effective_total_lines.saturating_sub(available_height);
-        // Add a small buffer to account for minor wrapping inaccuracies
         const SCROLL_BUFFER: usize = 2;
         let max_scroll_with_buffer = base_max_scroll.saturating_add(SCROLL_BUFFER);
 
-        // Prevent scrolling beyond the calculated maximum + buffer
         app_state.preview_scroll = app_state.preview_scroll.min(max_scroll_with_buffer);
     } else {
         app_state.preview_scroll = 0;
@@ -400,21 +387,19 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .style(*DEFAULT_STYLE);
 
     frame.render_widget(block, area);
-    // Explicitly clear the inner area before rendering the paragraph
     frame.render_widget(Clear, inner_content_area);
     frame.render_widget(preview_paragraph, inner_content_area);
 
-     // Show scroll indicator if content height exceeds viewable height
-     let indicator_total_lines = effective_total_lines; // Use calculated estimate for display
-     if indicator_total_lines > available_height && available_height > 0 {
-         render_scroll_indicator(
-             frame,
-             inner_content_area,
-             app_state.preview_scroll + 1, // Display 1-based line number for current position
-             indicator_total_lines, // Use calculated effective total for display
-             *TITLE_STYLE
-         );
-     }
+    let indicator_total_lines = effective_total_lines;
+    if indicator_total_lines > available_height && available_height > 0 {
+        render_scroll_indicator(
+            frame,
+            inner_content_area,
+            app_state.preview_scroll + 1,
+            indicator_total_lines,
+            *TITLE_STYLE
+        );
+    }
 }
 
 // --- Dialog Rendering ---
@@ -425,46 +410,39 @@ fn render_status_dialog(frame: &mut Frame, app_state: &mut AppState) {
             let frame_width = frame.size().width;
             let frame_height = frame.size().height;
 
-            // --- Dynamic Size Calculation ---
             let title_width = status_dialog.title.len() as u16;
-            // Estimate message width needs (consider longest line if multi-line)
             let message_lines: Vec<&str> = status_dialog.message.lines().collect();
             let max_message_line_width = message_lines.iter().map(|l| l.len()).max().unwrap_or(0) as u16;
 
-            let min_width = 20; // Minimum dialog width
-            let max_width_pct = 0.8; // Max width as percentage of frame width
-            let h_padding = 2; // Horizontal padding + border
+            let min_width = 20;
+            let max_width_pct = 0.8;
+            let h_padding = 2;
 
-            // Calculate desired width
             let desired_width = (title_width.max(max_message_line_width) + h_padding)
                 .max(min_width)
                 .min((frame_width as f32 * max_width_pct) as u16);
 
-            // Estimate wrapped lines needed for the message
-            let effective_content_width = desired_width.saturating_sub(2); // Subtract borders
+            let effective_content_width = desired_width.saturating_sub(2);
             let mut estimated_lines = 0;
             if effective_content_width > 0 {
                  estimated_lines = message_lines.iter().map(|line| {
                     (line.len() as f32 / effective_content_width as f32).ceil() as u16
                  }).sum();
             }
-             estimated_lines = estimated_lines.max(1); // Ensure at least one line for the message
+             estimated_lines = estimated_lines.max(1);
 
 
-            let min_height = 5; // Minimum dialog height (title + border + msg + border + bottom)
-            let max_height_pct = 0.8; // Max height as percentage of frame height
-            let v_padding = 4; // Top title (1), Bottom title (1), Borders (2)
+            let min_height = 5;
+            let max_height_pct = 0.8;
+            let v_padding = 4;
 
-            // Calculate desired height
             let desired_height = (estimated_lines + v_padding)
                 .max(min_height)
                 .min((frame_height as f32 * max_height_pct) as u16);
 
-            // --- Centered Rect ---
             let dialog_area = helpers::centered_fixed_rect(desired_width, desired_height, frame.size());
 
-            // --- Render ---
-            frame.render_widget(Clear, dialog_area); // Clear the area
+            frame.render_widget(Clear, dialog_area);
 
             let dialog_style = if status_dialog.is_error {
                 *DIALOG_ERROR_STYLE
@@ -472,16 +450,15 @@ fn render_status_dialog(frame: &mut Frame, app_state: &mut AppState) {
                 *DIALOG_DEFAULT_STYLE
             };
 
-            // Invert the dialog style for the button
             let inverted_dialog_style = Style {
                 fg: dialog_style.bg,
                 bg: dialog_style.fg,
-                ..dialog_style // Keep other modifiers like bold, italic, etc.
+                ..dialog_style
             };
 
             let status_dismiss_line: Line<'static> = Line::from(vec![
                 KEY_ENTER_ESC.clone().style(inverted_dialog_style), Span::raw(" Dismiss ").style(dialog_style),
-            ]).alignment(Alignment::Center); // Keep the line's base style if needed, or remove .style(dialog_style) if the spans cover everything
+            ]).alignment(Alignment::Center);
             let status_dismiss_title: Title<'static> = Title::from(status_dismiss_line.clone())
                 .position(Position::Bottom).alignment(Alignment::Center);
 
@@ -494,15 +471,11 @@ fn render_status_dialog(frame: &mut Frame, app_state: &mut AppState) {
             frame.render_widget(dialog_block.clone(), dialog_area);
             let content_area = dialog_block.inner(dialog_area);
 
-            // Create paragraph with wrapping and centering
             let message_paragraph = Paragraph::new(status_dialog.message.clone())
                 .wrap(Wrap { trim: true })
-                .alignment(Alignment::Center) // Center text horizontally
+                .alignment(Alignment::Center)
                 .style(dialog_style);
 
-            // Render paragraph in the content area
-            // Note: Ratatui Paragraph doesn't vertically center block content easily after wrapping.
-            // Centering the dynamic dialog vertically provides the main vertical centering effect.
             frame.render_widget(message_paragraph, content_area);
         }
     }
