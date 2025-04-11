@@ -158,17 +158,27 @@ fn render_scroll_indicator(
     frame: &mut Frame,
     area: Rect,
     current_line: usize,
-    total_lines: usize,
+    total_lines: usize, // Now represents actual or estimated visual lines
     style: Style,
 ) {
-    if total_lines > area.height as usize && area.width > 5 {
-        let scroll_info = format!("[{}/{}]", current_line, total_lines);
-        let indicator_width = scroll_info.len() as u16;
-        let x_pos = area.right().saturating_sub(indicator_width);
-        let y_pos = area.y;
-        let scroll_rect = Rect::new(x_pos, y_pos, indicator_width, 1);
-        frame.render_widget(Paragraph::new(scroll_info).style(style), scroll_rect);
+    // Only show indicator if height > 0 and width allows it
+    if area.height == 0 || area.width < 5 || total_lines == 0 {
+        return;
     }
+
+    // Ensure current_line doesn't exceed total_lines visually
+    let display_current = current_line.min(total_lines);
+    let scroll_info = format!("[{}/{}]", display_current, total_lines);
+
+    let indicator_width = scroll_info.len() as u16;
+    // Ensure indicator doesn't overflow available width
+    if indicator_width > area.width {
+        return;
+    }
+    let x_pos = area.right().saturating_sub(indicator_width);
+    let y_pos = area.y; // Position at the top of the content area
+    let scroll_rect = Rect::new(x_pos, y_pos, indicator_width, 1);
+    frame.render_widget(Paragraph::new(scroll_info).style(style), scroll_rect);
 }
 
 // --- Main UI Rendering ---
@@ -235,6 +245,7 @@ fn render_event_table(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
 
     let block = Block::new()
         .title(Title::from(Span::styled(format!(" Events: {} ", app_state.selected_log_name), *TITLE_STYLE)).alignment(Alignment::Left).position(Position::Top))
+        .title(Title::from(Span::styled(format!(" {} Events Loaded ", app_state.events.len()), *TITLE_STYLE)).alignment(Alignment::Center).position(Position::Bottom))
         .borders(Borders::ALL)
         .border_style(border_style)
         .border_type(BORDER_TYPE_THEME)
@@ -296,7 +307,6 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let mut title_text: String;
     let content_to_display: String;
     let wrap_behavior: Wrap;
-    let total_lines: usize;
 
     match app_state.preview_view_mode {
         PreviewViewMode::Formatted => {
@@ -309,7 +319,7 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
              } else {
                  content_to_display = "<No event selected or error loading details>".to_string();
              }
-            wrap_behavior = Wrap { trim: true };
+            wrap_behavior = Wrap { trim: true }; // Wrap is ON for formatted
         }
         PreviewViewMode::RawXml => {
             title_text = " Event Details (Raw XML) ".to_string();
@@ -334,11 +344,10 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
                     content_to_display = "<No event selected or raw XML unavailable>".to_string();
                 }
             }
-            wrap_behavior = Wrap { trim: false };
+            wrap_behavior = Wrap { trim: false }; // Wrap is ON for XML
         }
     }
-    total_lines = content_to_display.lines().count();
-
+    let display_lines_count = content_to_display.lines().count(); // Actual lines based on \n
     let block = Block::new()
         .title(Title::from(Span::styled(title_text, *TITLE_STYLE)).alignment(Alignment::Left).position(Position::Top))
         .borders(Borders::ALL)
@@ -347,13 +356,40 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .style(*DEFAULT_STYLE);
 
     let inner_content_area = block.inner(area);
-    let available_height = inner_content_area.height;
+    let available_height = inner_content_area.height as usize;
+    let available_width = inner_content_area.width as usize;
 
-    if total_lines > 0 {
-        let max_scroll = total_lines.saturating_sub(available_height as usize).max(0);
-        app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
+    // Calculate effective total lines for scroll limiting by estimating wrapped lines
+    let effective_total_lines = if available_width > 0 {
+        // Approximate visual lines for wrapped content
+        let mut total_wrapped_lines = 0;
+        for line in content_to_display.lines() {
+            // Use chars().count() for better unicode handling
+            let char_count = line.chars().count();
+            // Estimate lines needed for this specific line based on width
+            // Use max(1) to count empty lines as 1 visual line
+            // Add a small multiplier to be more conservative in estimating wraps
+            let lines_needed = (((char_count.max(1)) as f32 / available_width as f32) * 1.2).ceil() as usize;
+            total_wrapped_lines += lines_needed;
+        }
+        total_wrapped_lines
     } else {
-         app_state.preview_scroll = 0;
+        // Use actual line count when width is not available
+        display_lines_count
+    };
+
+    // Apply scroll limit based on effective total lines
+    if effective_total_lines > 0 && available_height > 0 {
+        // Calculate base max_scroll based on estimation
+        let base_max_scroll = effective_total_lines.saturating_sub(available_height);
+        // Add a small buffer to account for minor wrapping inaccuracies
+        const SCROLL_BUFFER: usize = 2;
+        let max_scroll_with_buffer = base_max_scroll.saturating_add(SCROLL_BUFFER);
+
+        // Prevent scrolling beyond the calculated maximum + buffer
+        app_state.preview_scroll = app_state.preview_scroll.min(max_scroll_with_buffer);
+    } else {
+        app_state.preview_scroll = 0;
     }
 
     let scroll_offset = (app_state.preview_scroll as u16, 0);
@@ -364,10 +400,20 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .style(*DEFAULT_STYLE);
 
     frame.render_widget(block, area);
+    // Explicitly clear the inner area before rendering the paragraph
+    frame.render_widget(Clear, inner_content_area);
     frame.render_widget(preview_paragraph, inner_content_area);
 
-     if total_lines > available_height as usize {
-         render_scroll_indicator(frame, inner_content_area, app_state.preview_scroll + 1, total_lines, *TITLE_STYLE);
+     // Show scroll indicator if content height exceeds viewable height
+     let indicator_total_lines = effective_total_lines; // Use calculated estimate for display
+     if indicator_total_lines > available_height && available_height > 0 {
+         render_scroll_indicator(
+             frame,
+             inner_content_area,
+             app_state.preview_scroll + 1, // Display 1-based line number for current position
+             indicator_total_lines, // Use calculated effective total for display
+             *TITLE_STYLE
+         );
      }
 }
 
@@ -425,9 +471,23 @@ fn render_status_dialog(frame: &mut Frame, app_state: &mut AppState) {
             } else {
                 *DIALOG_DEFAULT_STYLE
             };
+
+            // Invert the dialog style for the button
+            let inverted_dialog_style = Style {
+                fg: dialog_style.bg,
+                bg: dialog_style.fg,
+                ..dialog_style // Keep other modifiers like bold, italic, etc.
+            };
+
+            let status_dismiss_line: Line<'static> = Line::from(vec![
+                KEY_ENTER_ESC.clone().style(inverted_dialog_style), Span::raw(" Dismiss ").style(dialog_style),
+            ]).alignment(Alignment::Center); // Keep the line's base style if needed, or remove .style(dialog_style) if the spans cover everything
+            let status_dismiss_title: Title<'static> = Title::from(status_dismiss_line.clone())
+                .position(Position::Bottom).alignment(Alignment::Center);
+
             let dialog_block = create_dialog_block(
                 &status_dialog.title,
-                STATUS_DISMISS_TITLE.clone(),
+                status_dismiss_title,
                 dialog_style,
             );
 
@@ -642,7 +702,6 @@ fn render_bottom_bar(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
     match app_state.focus {
         PanelFocus::Events => {
             spans.extend([
-                Span::styled("[Enter]", *KEY_STYLE), Span::raw(" Details | ").style(*FOOTER_STYLE),
                 KEY_S_SORT.clone(), Span::raw(" Sort | ").style(*FOOTER_STYLE),
                 KEY_L_LEVEL.clone(), Span::raw(format!(" Lvl ({}) | ", app_state.get_current_level_name())).style(*FOOTER_STYLE),
                 KEY_F_FILTER.clone(), Span::raw(format!(" Adv Filter ({}) | ", app_state.get_filter_status())).style(*FOOTER_STYLE),

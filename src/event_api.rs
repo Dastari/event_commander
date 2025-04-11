@@ -51,7 +51,13 @@ pub fn render_event_xml(event_handle: EVT_HANDLE) -> Option<String> {
         )
         .is_ok()
         {
-            Some(String::from_utf16_lossy(&buffer))
+            // Find the end of the actual XML content (last '>')
+            let actual_len = buffer[..buffer_used as usize]
+                .iter()
+                .rposition(|&c| c == b'>' as u16)
+                .map_or(buffer_used as usize, |p| p + 1); // Include the '>'
+
+            Some(String::from_utf16_lossy(&buffer[..actual_len]))
         } else {
             None
         }

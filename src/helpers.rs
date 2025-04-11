@@ -51,7 +51,17 @@ pub fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
         buf.clear();
     }
     
-    let bytes = writer.into_inner().into_inner();
+    let mut bytes = writer.into_inner().into_inner();
+    // Trim trailing whitespace bytes (space, tab, newline, cr)
+    while let Some(&last_byte) = bytes.last() {
+        if last_byte == b' ' || last_byte == b'\t' || last_byte == b'\n' || last_byte == b'\r' {
+            bytes.pop();
+        } else {
+            break;
+        }
+    }
+    // Ensure a single trailing newline
+    bytes.push(b'\n');
     String::from_utf8(bytes).map_err(|e| format!("UTF-8 Conversion Error: {}", e))
 }
 

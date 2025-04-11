@@ -104,6 +104,7 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
         KeyCode::Esc => {
             app_state.is_searching = false;
             app_state.search_term.clear();
+            app_state.last_search_term = None;
         }
         KeyCode::Enter => {
             if !app_state.search_term.is_empty() {
@@ -114,6 +115,7 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
             } else {
                 app_state.is_searching = false;
                 app_state.search_term.clear();
+                app_state.last_search_term = None;
             }
         }
         KeyCode::Char(c) => {
@@ -303,7 +305,10 @@ fn handle_events_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> P
         KeyCode::PageUp => app_state.page_up(),
         KeyCode::Home | KeyCode::Char('g') => app_state.go_to_top(),
         KeyCode::End | KeyCode::Char('G') => app_state.go_to_bottom(),
-        KeyCode::Char('s') => app_state.sort_descending = !app_state.sort_descending,
+        KeyCode::Char('s') => {
+            app_state.sort_descending = !app_state.sort_descending;
+            return PostKeyPressAction::ReloadData;
+        }
         KeyCode::Char('l') => {
             app_state.update_level_filter();
             return PostKeyPressAction::ReloadData;
@@ -312,6 +317,9 @@ fn handle_events_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> P
             return PostKeyPressAction::OpenFilterDialog;
         }
         KeyCode::Char('/') => {
+            if let Some(last_search) = &app_state.last_search_term {
+                app_state.search_term = last_search.clone();
+            }
             app_state.is_searching = true;
         }
         KeyCode::Char('n') => {
@@ -357,10 +365,10 @@ fn handle_preview_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
             ) {
                 let xml_content = raw_xml.clone();
                 let filename = format!(
-                    "{}-{}-{}-{}.xml",
+                    "{}-{}-[{}]-{}.xml",
                     helpers::sanitize_filename(&app_state.selected_log_name),
-                    helpers::sanitize_filename(&event_id.id),
                     event_id.datetime.replace(':', "-").replace(' ', "_"),
+                    helpers::sanitize_filename(&event_id.id),
                     helpers::sanitize_filename(&event_id.source)
                 );
                 
@@ -369,7 +377,7 @@ fn handle_preview_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                         Ok(_) => {
                            return PostKeyPressAction::ShowConfirmation(
                                 "Save Successful".to_string(),
-                                format!("Event saved to:\\n{}", filename),
+                                format!("Event saved to:\n\n{}", filename),
                             );
                         }
                         Err(e) => {
