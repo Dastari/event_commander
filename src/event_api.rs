@@ -3,11 +3,11 @@ use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
 use windows::{
-    Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError, ERROR_EVT_MESSAGE_NOT_FOUND, ERROR_INVALID_PARAMETER},
+    Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError},
     Win32::System::EventLog::{
         EVT_HANDLE, EvtClose, EvtNext, EvtNextPublisherId, EvtOpenPublisherEnum, EvtQuery,
         EvtQueryChannelPath, EvtQueryReverseDirection, EvtRender, EvtRenderEventXml,
-        EvtOpenPublisherMetadata, EvtFormatMessage, EvtFormatMessageId, EvtFormatMessageXml,
+        EvtOpenPublisherMetadata, EvtFormatMessage, EvtFormatMessageXml,
         EVT_VARIANT, EVT_VARIANT_0, EvtVarTypeString, // Added EVT_VARIANT types
     },
     core::PCWSTR,
@@ -397,7 +397,7 @@ pub fn format_event_message(
                 Ok(invalid_handle) => {
                     if !invalid_handle.is_invalid() { let _ = EvtClose(invalid_handle); }
                 }
-                Err(e) => {}
+                Err(_) => {}
             }
         }
 
@@ -430,7 +430,7 @@ pub fn format_event_message(
                          } else {}
                      } else {}
                  }
-                 Err(_e) => {}
+                 Err(_) => {}
                  Ok(_) => {}
              }
 

@@ -1,8 +1,6 @@
 use chrono::Local;
 use quick_xml::{events::Event, Reader};
 use crate::models::DisplayEvent;
-use crate::event_api::format_wer_event_data_from_map;
-use std::collections::HashMap;
 
 /// Parses an event XML string and returns a DisplayEvent struct with extracted data.
 #[cfg(target_os = "windows")]
@@ -12,8 +10,8 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
     let mut id = "0".to_string();
     let mut level = "Unknown".to_string();
     let mut datetime = String::new();
-    let mut system_data_end_pos: Option<usize> = None;
-    let mut event_data_message = "<No event data found>".to_string();
+    let mut _system_data_end_pos: Option<usize> = None;
+    let _event_data_message = "<No event data found>".to_string();
 
     let mut reader = Reader::from_str(xml);
     reader.trim_text(true);
@@ -27,6 +25,8 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
     let mut event_data_values = Vec::new();
     let mut current_text_buffer = String::new();
     let mut inside_event_or_user_data = false;
+
+    const MS_PREFIX: &str = "Microsoft-Windows-";
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -43,7 +43,11 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
                                 let attr_key = std::str::from_utf8(attr.key.local_name().into_inner()).unwrap_or("");
                                 if attr_key == "Name" {
                                     provider_name_original = attr.unescape_value().unwrap_or_default().to_string();
-                                    source = provider_name_original.clone();
+                                    source = if provider_name_original.starts_with(MS_PREFIX) {
+                                        provider_name_original[MS_PREFIX.len()..].to_string()
+                                    } else {
+                                        provider_name_original.clone()
+                                    };
                                 }
                             }
                         }
@@ -80,7 +84,7 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
                 match local_name.as_str() {
                     "System" => {
                         inside_system = false;
-                        system_data_end_pos = Some(reader.buffer_position());
+                        _system_data_end_pos = Some(reader.buffer_position());
                     }
                     "EventID" => inside_event_id = false,
                     "Level" => inside_level = false,

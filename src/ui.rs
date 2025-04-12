@@ -312,16 +312,31 @@ fn render_event_table(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
         let layout = Layout::vertical([Constraint::Percentage(40), Constraint::Length(3), Constraint::Percentage(40)]).split(inner_area);
         frame.render_widget(centered_text, layout[1]);
     } else {
-        let event_rows: Vec<Row> = app_state.events.iter().map(|event| {
+        let selected_index = app_state.table_state.selected();
+        const MS_PREFIX: &str = "Microsoft-Windows-";
+        let gray_style = Style::default().fg(Color::DarkGray);
+
+        let event_rows: Vec<Row> = app_state.events.iter().enumerate().map(|(i, event)| {
             let level_style = match event.level.as_str() {
                 "Warning" => *WARN_FG_STYLE,
                 "Error" | "Critical" => *ERROR_FG_STYLE,
                 _ => *DEFAULT_STYLE,
             };
+
+            let source_cell = if selected_index == Some(i) && event.provider_name_original.starts_with(MS_PREFIX) {
+                // Selected row and has prefix: Apply styling
+                let prefix = Span::styled(MS_PREFIX, gray_style.patch(*SELECTION_STYLE)); // Combine gray with selection highlight
+                let suffix = Span::styled(&event.provider_name_original[MS_PREFIX.len()..], *SELECTION_STYLE);
+                Cell::from(Line::from(vec![prefix, suffix]))
+            } else {
+                // Unselected row OR no prefix: Use the (potentially truncated) source field
+                Cell::from(event.source.clone())
+            };
+
             Row::new([
                 Cell::from(event.level.clone()).style(level_style),
                 Cell::from(event.datetime.clone()),
-                Cell::from(event.source.clone()),
+                source_cell, // Use the conditionally created cell
                 Cell::from(event.id.clone()),
             ]).style(*DEFAULT_STYLE)
         }).collect();
@@ -355,14 +370,13 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let is_focused = app_state.focus == PanelFocus::Preview;
     let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { THEME_FOCUSED_BORDER } else { THEME_BORDER }));
 
-    let mut title_text: String;
-    let content_to_display: String;
-    let wrap_behavior: Wrap;
+    let title_text: String;
+    let content_to_render: Text;
+    let wrap_behavior = Wrap { trim: false };
 
     match app_state.preview_view_mode {
         PreviewViewMode::RawXml => {
-            title_text = " Event Details (Raw XML) ".to_string();
-            content_to_display = if let Some(ref raw_xml) = app_state.preview_raw_xml {
+            let raw_xml_string = if let Some(ref raw_xml) = app_state.preview_raw_xml {
                 match helpers::pretty_print_xml(raw_xml) {
                     Ok(pretty_xml) => {
                         title_text = " Event Details (Pretty XML) ".to_string();
@@ -377,15 +391,15 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
                     }
                 }
             } else {
+                title_text = " Event Details (Raw XML) ".to_string();
                 "<No event selected or raw XML unavailable>".to_string()
             };
-            wrap_behavior = Wrap { trim: false };
+            content_to_render = Text::from(raw_xml_string);
         }
         PreviewViewMode::Formatted => {
              title_text = " Event Details (Formatted) ".to_string();
-             content_to_display = app_state.preview_formatted_content.clone()
-                .unwrap_or_else(|| "<No content available>".to_string());
-             wrap_behavior = Wrap { trim: false };
+             content_to_render = app_state.preview_content.clone()
+                .unwrap_or_else(|| Text::from("<No content available>"));
         }
     }
 
@@ -399,19 +413,32 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
-    let content_string = content_to_display;
-
     let effective_total_lines = if inner_area.width > 0 {
         let available_width = inner_area.width as usize;
-        let mut total_wrapped_lines = 0;
-        for line in content_string.lines() {
-            let char_count = line.chars().count();
-            let lines_needed = (((char_count.max(1)) as f32 / available_width as f32) * 1.2).ceil() as usize;
-            total_wrapped_lines += lines_needed;
-        }
-        total_wrapped_lines.max(1)
+        content_to_render.lines.iter().fold(0, |acc, line| {
+            let mut line_wrapped_height = 0;
+            let mut current_line_len = 0;
+            for span in &line.spans {
+                 let content_len = span.content.chars().count();
+                 if current_line_len + content_len > available_width {
+                     let span_lines = ((content_len as f32) / (available_width as f32)).ceil() as usize;
+                     line_wrapped_height += span_lines;
+                     current_line_len = content_len % available_width;
+                     if current_line_len == 0 && span_lines > 0 {
+                         if content_len > 0 { current_line_len = 0; }
+                         else { line_wrapped_height = line_wrapped_height.saturating_sub(1); }
+                     } else if span_lines == 0 && content_len > 0 {
+                         line_wrapped_height += 1;
+                         current_line_len = content_len;
+                     }
+                 } else {
+                    current_line_len += content_len;
+                 }
+             }
+             acc + line_wrapped_height.max(1)
+         })
     } else {
-        content_string.lines().count().max(1)
+        content_to_render.lines.len().max(1)
     };
 
     let available_height = inner_area.height as usize;
@@ -425,7 +452,7 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
 
     let scroll_offset = (app_state.preview_scroll as u16, 0);
 
-    let paragraph_to_render = Paragraph::new(content_string)
+    let paragraph_to_render = Paragraph::new(content_to_render)
         .wrap(wrap_behavior)
         .scroll(scroll_offset)
         .style(*DEFAULT_STYLE);

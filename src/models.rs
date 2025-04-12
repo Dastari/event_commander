@@ -1,5 +1,6 @@
 // use chrono::Local;
 use ratatui::widgets::TableState;
+use ratatui::text::Text;
 use std::io::{BufWriter};
 use std::fs::File;
 use std::collections::HashMap;
@@ -92,7 +93,7 @@ pub struct AppState {
     pub preview_scroll: usize,
     pub status_dialog: Option<StatusDialog>,
     pub preview_event_id: Option<String>,
-    pub preview_formatted_content: Option<String>,
+    pub preview_content: Option<Text<'static>>,
     pub preview_raw_xml: Option<String>,
     pub preview_view_mode: PreviewViewMode,
     pub log_file: Option<BufWriter<File>>,

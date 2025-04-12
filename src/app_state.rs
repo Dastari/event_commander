@@ -1,5 +1,7 @@
 use crate::models::{AppState, FilterCriteria, EventLevelFilter, PanelFocus, DisplayEvent, StatusDialog, LOG_NAMES, FilterFieldFocus, PreviewViewMode};
 use ratatui::widgets::TableState;
+use ratatui::text::{Line, Span, Text};
+use ratatui::style::{Color, Style};
 use chrono::Local;
 use std::io::{Write, BufWriter};
 use std::fs::OpenOptions;
@@ -45,7 +47,7 @@ impl AppState {
             preview_scroll: 0,
             status_dialog: None,
             preview_event_id: None,
-            preview_formatted_content: None,
+            preview_content: None,
             preview_raw_xml: None,
             preview_view_mode: PreviewViewMode::default(),
             log_file,
@@ -114,44 +116,59 @@ impl AppState {
     pub fn update_preview_for_selection(&mut self) {
         if let Some(selected_idx) = self.table_state.selected() {
             if let Some(event) = self.events.get(selected_idx) {
-                let header = format!(
-                    "Level:       {}\nDateTime:    {}\nSource:      {}\nEvent ID:    {}\n",
-                    event.level,
-                    event.datetime,
-                    event.source,
-                    event.id
-                );
+                const MS_PREFIX: &str = "Microsoft-Windows-";
+                let gray_style = Style::default().fg(Color::DarkGray);
+                let default_style = Style::default();
 
-                let message_content = event.formatted_message
+                let source_spans = if event.provider_name_original.starts_with(MS_PREFIX) {
+                    vec![
+                        Span::styled(MS_PREFIX.to_string(), gray_style),
+                        Span::styled(event.provider_name_original[MS_PREFIX.len()..].to_string(), default_style),
+                    ]
+                } else {
+                    vec![Span::styled(event.provider_name_original.clone(), default_style)]
+                };
+                let source_line = Line::from(source_spans);
+
+                let header_lines: Vec<Line> = vec![
+                    Line::from(format!("Level:       {}", event.level)),
+                    Line::from(format!("DateTime:    {}", event.datetime)),
+                    Line::from(format!("Source:      {}", event.source)),
+                    Line::from(format!("Event ID:    {}", event.id)),
+                    Line::from(String::new()),
+                    Line::from("--- Message ---".to_string()),
+                ];
+
+                let final_message_string = event.formatted_message
                     .as_ref()
                     .filter(|fm| !fm.is_empty())
-                    .map(|fm| fm.as_str())
+                    .cloned()
                     .unwrap_or_else(|| {
                         if !event.message.is_empty() && !event.message.starts_with("<No") {
-                            &event.message
+                            event.message.clone()
                         } else {
-                            "<No message content found>"
+                            "<No message content found>".to_string()
                         }
                     });
+                
+                let mut content_lines = header_lines;
+                content_lines.extend(final_message_string.lines().map(|s| Line::from(s.to_string())));
 
-                let mut combined_content = header.clone();
-                combined_content.push_str("\n--- Message ---\n");
-                combined_content.push_str(message_content);
-                combined_content.push('\n');
+                let content_text = Text::from(content_lines);
 
                 self.preview_event_id = Some(format!("{}_{}", event.source, event.id));
-                self.preview_formatted_content = Some(combined_content.trim_end().to_string());
+                self.preview_content = Some(content_text);
                 self.preview_raw_xml = Some(event.raw_data.clone());
                 self.preview_scroll = 0;
             } else {
                 self.preview_event_id = None;
-                self.preview_formatted_content = Some("<Error: Selected index out of bounds>".to_string());
+                self.preview_content = Some(Text::from("<Error: Selected index out of bounds>".to_string()));
                 self.preview_raw_xml = None;
                 self.preview_scroll = 0;
             }
         } else {
             self.preview_event_id = None;
-            self.preview_formatted_content = Some("<No event selected>".to_string());
+            self.preview_content = Some(Text::from("<No event selected>".to_string()));
             self.preview_raw_xml = None;
             self.preview_scroll = 0;
         }
