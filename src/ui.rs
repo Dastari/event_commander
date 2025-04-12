@@ -725,8 +725,12 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
             }
         }
 
-        let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply { *SELECTION_STYLE } else { base_text_style };
-        let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear { *SELECTION_STYLE } else { base_text_style };
+        let apply_focused = app_state.filter_dialog_focus == FilterFieldFocus::Apply;
+        let clear_focused = app_state.filter_dialog_focus == FilterFieldFocus::Clear;
+        
+        let apply_style = if apply_focused { inverted_style } else { base_text_style };
+        let clear_style = if clear_focused { inverted_style } else { base_text_style };
+        
         let button_line = Line::from(vec![
             Span::styled(" [ Apply ] ", apply_style),
             Span::raw(" ").style(base_text_style),
