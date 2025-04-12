@@ -49,7 +49,6 @@ impl AppState {
             preview_event_id: None,
             preview_formatted_content: None,
             preview_raw_xml: None,
-            preview_friendly_message: None,
             preview_view_mode: PreviewViewMode::default(),
             log_file, // Use the initialized log_file
             #[cfg(target_os = "windows")]
@@ -123,27 +122,42 @@ impl AppState {
     pub fn update_preview_for_selection(&mut self) {
         if let Some(selected_idx) = self.table_state.selected() {
             if let Some(event) = self.events.get(selected_idx) {
-                let mut formatted_content = format!(
-                    "Level:       {}\nDateTime:    {}\nSource:      {}\nEvent ID:    {}\n",
-                    event.level, event.datetime, event.source, event.id
+                // Construct the header part
+                let header = format!(
+                    "Level:       {}\nDateTime:    {}\nSource:      {}\nEvent ID:    {}\nProvider:    {}\n",
+                    event.level,
+                    event.datetime,
+                    event.source, // Use potentially shortened source for display
+                    event.id,
+                    event.provider_name_original // Display full provider name
                 );
-                formatted_content.push_str("\n--- Message ---\n");
-                // Use original message for constructed view
-                formatted_content.push_str(&event.message); 
-                formatted_content.push('\n');
 
+                // Build the final content string for the "Formatted" view
+                let mut combined_content = header.clone(); // Start with header
+
+                // Append the parsed message data (from EventData/UserData)
+                if !event.message.is_empty() && !event.message.starts_with("<No") {
+                    // Always add the message data header now
+                    combined_content.push_str("\n--- Message Data ---\n");
+                    combined_content.push_str(&event.message);
+                    combined_content.push('\n');
+                }
+                
+                // If neither friendly nor parsed message exists, add a placeholder
+                if event.message.is_empty() || event.message.starts_with("<No") {
+                    combined_content.push_str("\n--- Message ---\n<No message data found in event XML>\n");
+                }
+
+                // Update AppState fields
                 self.preview_event_id = Some(format!("{}_{}", event.source, event.id));
-                self.preview_formatted_content = Some(formatted_content);
+                self.preview_formatted_content = Some(combined_content.trim_end().to_string()); // Assign combined content
                 self.preview_raw_xml = Some(event.raw_data.clone());
-                // Copy the (potentially pre-formatted) message
-                self.preview_friendly_message = event.formatted_message.clone(); 
                 self.preview_scroll = 0;
             } else {
                 // Index out of bounds
                 self.preview_event_id = None;
                 self.preview_formatted_content = Some("<Error: Selected index out of bounds>".to_string());
                 self.preview_raw_xml = None;
-                self.preview_friendly_message = None;
                 self.preview_scroll = 0;
             }
         } else {
@@ -151,7 +165,6 @@ impl AppState {
             self.preview_event_id = None;
             self.preview_formatted_content = Some("<No event selected>".to_string());
             self.preview_raw_xml = None;
-            self.preview_friendly_message = None;
             self.preview_scroll = 0;
         }
     }

@@ -356,49 +356,49 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { THEME_FOCUSED_BORDER } else { THEME_BORDER }));
 
     let mut title_text: String;
-    let content_to_display: String;
+    let mut content_to_display: Option<String> = None;
     let wrap_behavior: Wrap;
+    let mut paragraph_text: Vec<Line> = vec![];
 
     match app_state.preview_view_mode {
-        PreviewViewMode::Formatted => {
-            title_text = " Event Details (Formatted) ".to_string();
-            if let Some(friendly_msg) = &app_state.preview_friendly_message {
-                 content_to_display = friendly_msg.clone();
-            } else if let Some(constructed_msg) = &app_state.preview_formatted_content {
-                 content_to_display = constructed_msg.clone();
-                 title_text = " Event Details (Constructed) ".to_string();
-             } else {
-                 content_to_display = "<No event selected or error loading details>".to_string();
-             }
-            wrap_behavior = Wrap { trim: true };
-        }
         PreviewViewMode::RawXml => {
             title_text = " Event Details (Raw XML) ".to_string();
-            match &app_state.preview_raw_xml {
-                Some(raw_xml) => {
-                    match helpers::pretty_print_xml(raw_xml) {
-                        Ok(pretty_xml) => {
-                            content_to_display = pretty_xml;
-                            title_text = " Event Details (Pretty XML) ".to_string();
-                        }
-                        Err(e) => {
-                            content_to_display = format!(
-                                "<Failed to pretty-print XML: {}. Displaying raw XML.>\n\n{}",
-                                e,
-                                raw_xml
-                            );
-                             title_text = " Event Details (Raw XML - Error) ".to_string();
-                        }
+            if let Some(ref raw_xml) = app_state.preview_raw_xml {
+                match helpers::pretty_print_xml(raw_xml) {
+                    Ok(pretty_xml) => {
+                        content_to_display = Some(pretty_xml);
+                        title_text = " Event Details (Pretty XML) ".to_string();
+                    }
+                    Err(e) => {
+                        let error_content = format!(
+                            "<Failed to pretty-print XML: {}. Displaying raw XML.>
+
+{}",
+                            e, raw_xml
+                        );
+                        content_to_display = Some(error_content);
+                        title_text = " Event Details (Raw XML - Error) ".to_string();
                     }
                 }
-                None => {
-                    content_to_display = "<No event selected or raw XML unavailable>".to_string();
-                }
+            } else {
+                content_to_display = Some("<No event selected or raw XML unavailable>".to_string());
             }
-            wrap_behavior = Wrap { trim: false };
+            wrap_behavior = Wrap { trim: false }; // No trim for XML
+            if let Some(content) = &content_to_display {
+                paragraph_text = content.lines().map(Line::from).collect::<Vec<_>>();
+            }
+        }
+        PreviewViewMode::Formatted => {
+             title_text = " Event Details (Formatted) ".to_string();
+             content_to_display = app_state.preview_formatted_content.clone();
+             wrap_behavior = Wrap { trim: false }; // Use trim false for formatted view as well
+             if let Some(content) = &content_to_display {
+                 paragraph_text = content.lines().map(Line::from).collect::<Vec<_>>();
+             } else {
+                 paragraph_text = vec![Line::from("<No content available>")];
+             }
         }
     }
-    let display_lines_count = content_to_display.lines().count();
 
     let block = Block::new()
         .title(Title::from(Span::styled(title_text, *TITLE_STYLE)).alignment(Alignment::Left).position(Position::Top))
@@ -407,51 +407,42 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .border_type(BORDER_TYPE_THEME)
         .style(*DEFAULT_STYLE);
 
-    let inner_content_area = block.inner(area);
-    let available_height = inner_content_area.height as usize;
-    let available_width = inner_content_area.width as usize;
+    let inner_area = block.inner(area);
+    frame.render_widget(block, area); // Render block first
 
-    let effective_total_lines = if available_width > 0 {
-        let mut total_wrapped_lines = 0;
-        for line in content_to_display.lines() {
-            let char_count = line.chars().count();
-            let lines_needed = (((char_count.max(1)) as f32 / available_width as f32) * 1.2).ceil() as usize;
-            total_wrapped_lines += lines_needed;
-        }
-        total_wrapped_lines
-    } else {
-        display_lines_count
-    };
+    // Calculate scroll position based on the final content
+    let display_lines_count = paragraph_text.len();
+    let available_height = inner_area.height as usize;
+
+     // More accurate wrap calculation using textwrap or similar would be ideal,
+     // but for now, a simple line count is used for scroll calculation.
+     // Note: This might mean the scroll bar isn't perfectly representative if lines wrap heavily.
+    let effective_total_lines = display_lines_count;
 
     if effective_total_lines > 0 && available_height > 0 {
-        let base_max_scroll = effective_total_lines.saturating_sub(available_height);
-        const SCROLL_BUFFER: usize = 2;
-        let max_scroll_with_buffer = base_max_scroll.saturating_add(SCROLL_BUFFER);
-
-        app_state.preview_scroll = app_state.preview_scroll.min(max_scroll_with_buffer);
+        let max_scroll = effective_total_lines.saturating_sub(available_height);
+        app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
     } else {
         app_state.preview_scroll = 0;
     }
 
     let scroll_offset = (app_state.preview_scroll as u16, 0);
 
-    let preview_paragraph = Paragraph::new(content_to_display)
+    let paragraph = Paragraph::new(paragraph_text)
         .wrap(wrap_behavior)
         .scroll(scroll_offset)
         .style(*DEFAULT_STYLE);
 
-    frame.render_widget(block, area);
-    frame.render_widget(Clear, inner_content_area);
-    frame.render_widget(preview_paragraph, inner_content_area);
+    frame.render_widget(paragraph, inner_area); // Render content inside block
 
-    let indicator_total_lines = effective_total_lines;
-    if indicator_total_lines > available_height && available_height > 0 {
+    // Render scroll indicator if needed
+    if effective_total_lines > available_height {
         render_scroll_indicator(
             frame,
-            inner_content_area,
+            inner_area,
             app_state.preview_scroll + 1,
-            indicator_total_lines,
-            *TITLE_STYLE
+            effective_total_lines,
+            border_style, // Use border style for indicator
         );
     }
 }

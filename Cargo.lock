@@ -150,6 +150,7 @@ dependencies = [
  "lazy_static",
  "quick-xml",
  "ratatui",
+ "serde",
  "windows",
 ]
 

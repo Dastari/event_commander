@@ -1,147 +1,116 @@
 use chrono::Local;
-use quick_xml::Reader;
+use quick_xml::{events::Event, Reader};
 use crate::models::DisplayEvent;
 use crate::event_api::format_wer_event_data_from_map;
+use std::collections::HashMap;
 
 /// Parses an event XML string and returns a DisplayEvent struct with extracted data.
 #[cfg(target_os = "windows")]
 pub fn parse_event_xml(xml: &str) -> DisplayEvent {
     let mut source = "<Parse Error>".to_string();
+    let mut provider_name_original = "<Parse Error>".to_string();
     let mut id = "0".to_string();
     let mut level = "Unknown".to_string();
     let mut datetime = String::new();
+    let mut system_data_end_pos: Option<usize> = None;
+    let mut event_data_message = "<No event data found>".to_string();
 
-    // Create a quick-xml reader to process the XML
+    // --- First Pass: Extract System Info and find end of </System> tag ---
     let mut reader = Reader::from_str(xml);
     reader.trim_text(true);
     reader.expand_empty_elements(true);
 
     let mut buf = Vec::new();
     let mut inside_system = false;
-    let mut inside_event_data = false;
-
-    // Track if we're inside a particular element
     let mut inside_event_id = false;
     let mut inside_level = false;
 
-    // We'll collect event data as we go
-    let mut data_map = std::collections::HashMap::new();
+    // Specific handling for WER data map
+    let mut wer_data_map = HashMap::new();
+    let mut inside_event_data_for_wer = false;
     let mut current_data_name = None;
     let mut current_data_value = String::new();
-    let mut inside_data = false;
+    let mut inside_data_for_wer = false;
 
-    // Process the XML
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(quick_xml::events::Event::Start(ref e)) => {
+            Ok(Event::Start(ref e)) => {
                 let local_name = std::str::from_utf8(e.name().local_name().into_inner())
                     .unwrap_or("")
                     .to_string();
 
                 match local_name.as_str() {
-                    "System" => {
-                        inside_system = true;
-                    }
+                    "System" => inside_system = true,
                     "Provider" if inside_system => {
-                        // Extract Provider Name attribute
                         for attr_result in e.attributes() {
                             if let Ok(attr) = attr_result {
-                                let attr_key =
-                                    std::str::from_utf8(attr.key.local_name().into_inner())
-                                        .unwrap_or("")
-                                        .to_string();
+                                let attr_key = std::str::from_utf8(attr.key.local_name().into_inner()).unwrap_or("");
                                 if attr_key == "Name" {
-                                    let value =
-                                        attr.unescape_value().unwrap_or_default().to_string();
-                                    source = value;
+                                    provider_name_original = attr.unescape_value().unwrap_or_default().to_string();
+                                    source = provider_name_original.clone();
                                 }
                             }
                         }
                     }
-                    "EventID" if inside_system => {
-                        inside_event_id = true;
-                    }
-                    "Level" if inside_system => {
-                        inside_level = true;
-                    }
+                    "EventID" if inside_system => inside_event_id = true,
+                    "Level" if inside_system => inside_level = true,
                     "TimeCreated" if inside_system => {
-                        // Extract SystemTime attribute
                         for attr_result in e.attributes() {
                             if let Ok(attr) = attr_result {
-                                let attr_key =
-                                    std::str::from_utf8(attr.key.local_name().into_inner())
-                                        .unwrap_or("")
-                                        .to_string();
+                                let attr_key = std::str::from_utf8(attr.key.local_name().into_inner()).unwrap_or("");
                                 if attr_key == "SystemTime" {
-                                    let time_str =
-                                        attr.unescape_value().unwrap_or_default().to_string();
+                                    let time_str = attr.unescape_value().unwrap_or_default().to_string();
                                     datetime = chrono::DateTime::parse_from_rfc3339(&time_str)
-                                        .map(|dt| {
-                                            dt.with_timezone(&Local)
-                                                .format("%Y-%m-%d %H:%M:%S")
-                                                .to_string()
-                                        })
+                                        .map(|dt| dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
                                         .unwrap_or(time_str);
                                 }
                             }
                         }
                     }
                     "EventData" => {
-                        inside_event_data = true;
+                        inside_event_data_for_wer = true;
                     }
-                    "Data" if inside_event_data => {
-                        inside_data = true;
+                    "Data" if inside_event_data_for_wer => {
+                        inside_data_for_wer = true;
                         current_data_value.clear();
-
-                        // Check for a Name attribute
                         current_data_name = None;
                         for attr_result in e.attributes() {
                             if let Ok(attr) = attr_result {
-                                let attr_key =
-                                    std::str::from_utf8(attr.key.local_name().into_inner())
-                                        .unwrap_or("")
-                                        .to_string();
+                                let attr_key = std::str::from_utf8(attr.key.local_name().into_inner()).unwrap_or("");
                                 if attr_key == "Name" {
-                                    let value =
-                                        attr.unescape_value().unwrap_or_default().to_string();
-                                    current_data_name = Some(value);
+                                    current_data_name = Some(attr.unescape_value().unwrap_or_default().to_string());
                                 }
                             }
                         }
                     }
-                    _ => {}
+                    _ => {},
                 }
             }
-            Ok(quick_xml::events::Event::End(ref e)) => {
+            Ok(Event::End(ref e)) => {
                 let local_name = std::str::from_utf8(e.name().local_name().into_inner())
                     .unwrap_or("")
                     .to_string();
-
                 match local_name.as_str() {
                     "System" => {
                         inside_system = false;
+                        system_data_end_pos = Some(reader.buffer_position());
                     }
-                    "EventID" => {
-                        inside_event_id = false;
-                    }
-                    "Level" => {
-                        inside_level = false;
-                    }
+                    "EventID" => inside_event_id = false,
+                    "Level" => inside_level = false,
                     "EventData" => {
-                        inside_event_data = false;
+                        inside_event_data_for_wer = false;
                     }
-                    "Data" if inside_event_data => {
-                        inside_data = false;
+                    "Data" if inside_data_for_wer => {
+                        inside_data_for_wer = false;
                         if let Some(name) = current_data_name.take() {
-                            data_map.insert(name, current_data_value.clone());
+                            wer_data_map.insert(name, current_data_value.clone());
                         }
                     }
-                    _ => {}
+                    _ => {},
                 }
             }
-            Ok(quick_xml::events::Event::Text(ref e)) => {
+            Ok(Event::Text(ref e)) => {
                 let text = e.unescape().unwrap_or_default().to_string();
-
                 if inside_event_id {
                     id = text;
                 } else if inside_level {
@@ -153,54 +122,73 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
                         "5" => "Verbose".to_string(),
                         _ => format!("Unknown({})", text),
                     };
-                } else if inside_data {
-                    current_data_value.push_str(&text);
+                } else if inside_data_for_wer {
+                     current_data_value.push_str(&text);
                 }
             }
-            Ok(quick_xml::events::Event::Eof) => break,
+            Ok(Event::Eof) => break,
             Err(_) => break,
             _ => {}
         }
-
         buf.clear();
     }
 
-    // If we found the provider name, check if it starts with Microsoft-Windows-
-    if source != "<Parse Error>" && source.starts_with("Microsoft-Windows-") {
-        source = source.trim_start_matches("Microsoft-Windows-").to_string();
+    // --- Second Pass: Extract and process XML fragment after </System> --- 
+    if let Some(start_pos) = system_data_end_pos {
+        if let Some(end_pos) = xml.rfind("</Event>") {
+            if end_pos > start_pos {
+                let data_slice = &xml[start_pos..end_pos];
+                let trimmed_fragment = data_slice.trim();
+                if !trimmed_fragment.is_empty() {
+                    let mut text_reader = Reader::from_str(trimmed_fragment);
+                    text_reader.trim_text(true);
+                    text_reader.expand_empty_elements(true);
+                    let mut fragment_buf = Vec::new();
+                    let mut extracted_texts = Vec::new();
+                    loop {
+                        match text_reader.read_event_into(&mut fragment_buf) {
+                            Ok(Event::Text(e)) => {
+                                if let Ok(text) = e.unescape() {
+                                    let text_str = text.to_string();
+                                    let trimmed_text = text_str.trim();
+                                    if !trimmed_text.is_empty() {
+                                        extracted_texts.push(trimmed_text.to_string());
+                                    }
+                                }
+                            }
+                            Ok(Event::Eof) => break,
+                            Err(_) => break,
+                            _ => {}
+                        }
+                        fragment_buf.clear();
+                    }
+                    if !extracted_texts.is_empty() {
+                       event_data_message = extracted_texts.join("\n");
+                    }
+                }
+            }
+        }
     }
 
-    // Format message from event data
-    let message = if !data_map.is_empty() {
-        if source == "Windows Error Reporting" && id == "1001" {
-            // Special handling for Windows Error Reporting events
-            format_wer_event_data_from_map(&data_map)
-        } else {
-            // Generic format for other events
-            data_map
-                .iter()
-                .map(|(name, value)| {
-                    if value.is_empty() {
-                        format!("  {}", name)
-                    } else {
-                        format!("  {}: {}", name, value)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-    } else if inside_event_data {
-        "<No Data found>".to_string()
+    // Commented out source name cleanup
+    // if source != "<Parse Error>" && source.starts_with("Microsoft-Windows-") {
+    //     source = source.trim_start_matches("Microsoft-Windows-").to_string();
+    // }
+
+    // WER Formatting check
+    let final_message = if provider_name_original == "Microsoft-Windows-Windows Error Reporting" && id == "1001" && !wer_data_map.is_empty() {
+        format_wer_event_data_from_map(&wer_data_map)
     } else {
-        "<No EventData found>".to_string()
+        event_data_message
     };
 
     DisplayEvent {
         level,
         datetime,
         source,
+        provider_name_original,
         id,
-        message,
+        message: final_message,
         raw_data: xml.to_string(),
         formatted_message: None,
     }

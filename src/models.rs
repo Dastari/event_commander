@@ -3,16 +3,18 @@ use ratatui::widgets::TableState;
 use std::io::{BufWriter};
 use std::fs::File;
 use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::System::EventLog::EVT_HANDLE;
 
 /// Represents an event with displayable information.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DisplayEvent {
     pub level: String,
     pub datetime: String,
     pub source: String,
+    pub provider_name_original: String,
     pub id: String,
     pub message: String,
     pub raw_data: String,
@@ -92,13 +94,11 @@ pub struct AppState {
     pub preview_event_id: Option<String>,
     pub preview_formatted_content: Option<String>,
     pub preview_raw_xml: Option<String>,
-    pub preview_friendly_message: Option<String>,
     pub preview_view_mode: PreviewViewMode,
-    // Use BufWriter<File> for buffered logging
     pub log_file: Option<BufWriter<File>>,
     #[cfg(target_os = "windows")]
     pub query_handle: Option<EVT_HANDLE>,
-    #[cfg(target_os = "windows")] // Cache for publisher metadata handles
+    #[cfg(target_os = "windows")]
     pub publisher_metadata_cache: HashMap<String, EVT_HANDLE>,
     pub is_loading: bool,
     pub no_more_events: bool,
@@ -116,7 +116,6 @@ pub struct AppState {
     pub filter_dialog_source_input: String,
     pub filter_dialog_filtered_sources: Vec<(usize, String)>,
     pub filter_dialog_filtered_source_selection: Option<usize>,
-    // Cursor positions for input fields
     pub filter_event_id_cursor: usize,
     pub filter_source_cursor: usize,
     pub search_cursor: usize,
