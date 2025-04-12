@@ -8,16 +8,15 @@ Event Commander is a terminal-based event viewer for Windows, written in Rust. I
 
 ## Features
 
-- **Log Selection:** Navigate and select from standard Windows Event Logs (Application, System, Security, Setup, ForwardedEvents) in the left panel.
-- **Event Listing:** View events from the selected log in a table format (Level, DateTime, Source, Event ID) in the main panel.
-- **Dynamic Loading:** Events are fetched in batches as you scroll down the event list.
-- **Event Details:** Press Enter on an event to open a detailed view dialog.
-- **Multiple Detail Views:** Toggle between a formatted summary and the raw event XML within the details dialog using 'v'.
+- **Log Selection:** Select from standard Windows Event Logs (Application, System, Security, Setup, ForwardedEvents).
+- **Event Listing:** View events from the selected log in a table format (Level, DateTime, Source, Event ID).
+- **Filtering & Sorting:** Filter events by Level, Source, Event ID, and Date range. Sort events by DateTime or Event ID.
+- **Event Details:** View detailed formatted event messages and the raw event XML.
 - **XML Pretty Printing:** The raw XML view is automatically pretty-printed for readability.
-- **Save Event:** Save the full, pretty-printed XML of the selected event to a local file using 's' in the details dialog.
-- **Preview Pane:** See a preview of the selected event's formatted message at the bottom.
-- **Keyboard Navigation:** Use arrow keys, PageUp/Down, Home/End, Tab/BackTab, and Enter/Esc for navigation and interaction.
-- **Logging:** Application status and errors are logged to `event_commander.log`.
+- **Save Event:** Save the full, pretty-printed XML of the selected event to a local file.
+- **Dynamic Loading:** Events are fetched in batches as you scroll down the event list.
+- **Keyboard Navigation:** Use arrow keys, PageUp/Down, Home/End, Tab/BackTab, and specific function keys (like F1 for Help, f for Filter) for navigation and interaction.
+- **Theming:** Includes a Norton Commander inspired theme.
 
 ## Building and Running
 
@@ -51,6 +50,6 @@ Event Commander is a terminal-based event viewer for Windows, written in Rust. I
 
 For convenience, a precompiled binary for Windows (`x86_64-pc-windows-msvc` target) is available for the latest release:
 
-- **[v1.0.3 Download](https://github.com/Dastari/event_commander/releases/download/v1.0.3/event_commander-v1.0.3-windows.zip)**
+- **[v1.0.3 Download](https://github.com/Dastari/event_commander/releases/download/v1.0.3/event_commander.exe)**
 
-Simply download the `.zip` file, extract the `.exe`, and run it.
+Simply download the `.exe` file and run it.
