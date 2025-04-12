@@ -23,7 +23,7 @@ Event Commander is a terminal-based event viewer for Windows, written in Rust. I
 1.  **Prerequisites:**
     - Install Rust and Cargo: [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install)
     - Install Windows SDK on your Windows system
-    - Install MinGW-w64 toolchain in WSL:
+    - Install MinGW-w64 toolchain (if using WSL):
       ```bash
       sudo apt-get update && sudo apt-get install -y mingw-w64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
       ```
