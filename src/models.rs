@@ -1,11 +1,11 @@
 // use chrono::Local;
-use ratatui::widgets::TableState;
-use ratatui::text::Text;
-use std::io::{BufWriter};
-use std::fs::File;
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Duration, Utc};
+use ratatui::text::Text;
+use ratatui::widgets::TableState;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufWriter;
 
 #[cfg(target_os = "windows")]
 use windows::Win32::System::EventLog::EVT_HANDLE;
@@ -138,7 +138,6 @@ pub struct AppState {
     pub search_cursor: usize,
     pub help_dialog_visible: bool,
     pub help_scroll_position: usize,
-    pub is_initial_load_pending: bool,
 }
 
 // Constants
@@ -279,4 +278,4 @@ impl FilterFieldFocus {
 // It should reside in `src/app_state.rs`.
 
 // NOTE: The `impl Drop for AppState { ... }` block has been removed from this file.
-// It should reside in `src/app_state.rs`. 
+// It should reside in `src/app_state.rs`.

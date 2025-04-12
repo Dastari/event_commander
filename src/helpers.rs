@@ -15,7 +15,7 @@ pub fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
     reader.trim_text(true);
     let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
     let mut buf = Vec::new();
-    
+
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(XmlEvent::Start(e)) => writer
@@ -50,7 +50,7 @@ pub fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
         }
         buf.clear();
     }
-    
+
     let mut bytes = writer.into_inner().into_inner();
     // Trim trailing whitespace bytes (space, tab, newline, cr)
     while let Some(&last_byte) = bytes.last() {
@@ -66,9 +66,13 @@ pub fn pretty_print_xml(xml_str: &str) -> Result<String, String> {
 }
 
 /// Computes a centered fixed-size rectangle within a given rectangle.
-pub fn centered_fixed_rect(width: u16, height: u16, r: ratatui::prelude::Rect) -> ratatui::prelude::Rect {
+pub fn centered_fixed_rect(
+    width: u16,
+    height: u16,
+    r: ratatui::prelude::Rect,
+) -> ratatui::prelude::Rect {
     use ratatui::prelude::Rect;
     let x = r.x + r.width.saturating_sub(width) / 2;
     let y = r.y + r.height.saturating_sub(height) / 2;
     Rect::new(x, y, width.min(r.width), height.min(r.height))
-} 
+}

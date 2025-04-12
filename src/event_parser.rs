@@ -2,6 +2,7 @@ use chrono::Local;
 use quick_xml::{events::Event, Reader};
 use crate::models::DisplayEvent;
 
+
 /// Parses an event XML string and returns a DisplayEvent struct with extracted data.
 #[cfg(target_os = "windows")]
 pub fn parse_event_xml(xml: &str) -> DisplayEvent {
@@ -26,8 +27,6 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
     let mut current_text_buffer = String::new();
     let mut inside_event_or_user_data = false;
 
-    const MS_PREFIX: &str = "Microsoft-Windows-";
-
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
@@ -43,11 +42,7 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
                                 let attr_key = std::str::from_utf8(attr.key.local_name().into_inner()).unwrap_or("");
                                 if attr_key == "Name" {
                                     provider_name_original = attr.unescape_value().unwrap_or_default().to_string();
-                                    source = if provider_name_original.starts_with(MS_PREFIX) {
-                                        provider_name_original[MS_PREFIX.len()..].to_string()
-                                    } else {
-                                        provider_name_original.clone()
-                                    };
+                                    source = provider_name_original.clone();
                                 }
                             }
                         }
