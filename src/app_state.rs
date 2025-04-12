@@ -169,22 +169,6 @@ impl AppState {
         }
     }
 
-    /// Switches to the next log in the list and clears the active filter.
-    #[allow(dead_code)]
-    pub fn next_log(&mut self) {
-        if self.selected_log_index < crate::models::LOG_NAMES.len() - 1 {
-            self.selected_log_index += 1;
-        }
-        self.active_filter = None;
-    }
-    
-    /// Switches to the previous log in the list and clears the active filter.
-    #[allow(dead_code)]
-    pub fn previous_log(&mut self) {
-        self.selected_log_index = self.selected_log_index.saturating_sub(1);
-        self.active_filter = None;
-    }
-    
     /// Scrolls down one event in the event list; loads more events if near the end.
     pub fn scroll_down(&mut self) {
         let i = match self.table_state.selected() {
@@ -290,19 +274,6 @@ impl AppState {
         } else {
              self.preview_scroll = 0;
         }
-    }
-    
-    /// Resets the preview scroll position.
-    #[allow(dead_code)]
-    pub fn reset_preview_scroll(&mut self) {
-        self.preview_scroll = 0;
-    }
-    
-    /// Selects an event by index in the event table and resets preview scroll.
-    #[allow(dead_code)]
-    pub fn select_event(&mut self, index: Option<usize>) {
-        self.table_state.select(index);
-        self.reset_preview_scroll();
     }
     
     /// Determines if an event matches the provided search term.
