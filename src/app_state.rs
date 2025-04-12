@@ -8,14 +8,10 @@ use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
 use windows::{
-    Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, GetLastError},
     Win32::System::EventLog::{
-        EvtClose, EvtOpenPublisherMetadata, EvtFormatMessage, EvtFormatMessageId, EVT_HANDLE,
+        EvtClose,
     },
-    core::PCWSTR,
 };
-#[cfg(target_os = "windows")]
-use crate::event_api::to_wide_string;
 
 impl AppState {
     /// Creates a new instance of AppState with default values.
@@ -41,9 +37,8 @@ impl AppState {
                 None
             }
         };
-        // --- End Log File Init ---
 
-        let mut app_state = AppState {
+        let app_state = AppState {
             focus: PanelFocus::Events,
             selected_log_index: 0,
             selected_log_name: initial_log_name,
@@ -84,7 +79,6 @@ impl AppState {
             help_scroll_position: 0,
         };
 
-        app_state.log("Application starting..."); // Log initial message
         app_state
     }
 
@@ -163,6 +157,7 @@ impl AppState {
     }
 
     /// Switches to the next log in the list and clears the active filter.
+    #[allow(dead_code)]
     pub fn next_log(&mut self) {
         if self.selected_log_index < crate::models::LOG_NAMES.len() - 1 {
             self.selected_log_index += 1;
@@ -171,6 +166,7 @@ impl AppState {
     }
     
     /// Switches to the previous log in the list and clears the active filter.
+    #[allow(dead_code)]
     pub fn previous_log(&mut self) {
         self.selected_log_index = self.selected_log_index.saturating_sub(1);
         self.active_filter = None;
@@ -274,6 +270,7 @@ impl AppState {
     }
     
     /// Scrolls the preview panel to the bottom.
+    #[allow(dead_code)]
     pub fn preview_scroll_to_bottom(&mut self, content_height: usize, view_height: usize) {
          if content_height > view_height {
             self.preview_scroll = content_height - view_height;
@@ -283,11 +280,13 @@ impl AppState {
     }
     
     /// Resets the preview scroll position.
+    #[allow(dead_code)]
     pub fn reset_preview_scroll(&mut self) {
         self.preview_scroll = 0;
     }
     
     /// Selects an event by index in the event table and resets preview scroll.
+    #[allow(dead_code)]
     pub fn select_event(&mut self, index: Option<usize>) {
         self.table_state.select(index);
         self.reset_preview_scroll();
@@ -341,7 +340,7 @@ impl AppState {
         }
     }
     
-    /// Sets the selected log index and clears the active filter.
+    /// Selects the selected log index and clears the active filter.
     pub fn select_log_index(&mut self, index: usize) {
         if index < crate::models::LOG_NAMES.len() {
             self.selected_log_index = index;
@@ -351,7 +350,6 @@ impl AppState {
             self.update_preview_for_selection();
             self.no_more_events = false;
             self.active_filter = None; // Also clear filter when changing log
-            self.log(&format!("Selected log: {}", self.selected_log_name));
             #[cfg(target_os = "windows")]
             self.start_or_continue_log_load(true); // Start fresh load
         }
@@ -390,7 +388,6 @@ impl AppState {
             level: new_level,
             ..current_filter
         });
-        self.log(&format!("Level filter set to: {}", new_level.display_name()));
         // Reload data needed after filter change
          #[cfg(target_os = "windows")]
          self.start_or_continue_log_load(true);
@@ -405,18 +402,16 @@ impl Drop for AppState {
             // Close the main query handle
             if let Some(handle) = self.query_handle.take() { // Use take to prevent double close
                 unsafe {
-                    EvtClose(handle);
+                    let _ = EvtClose(handle);
                 }
             }
             // Close all cached publisher metadata handles
             for (_provider, handle) in self.publisher_metadata_cache.drain() { // Use drain to consume cache
                 unsafe {
-                    EvtClose(handle);
+                    let _ = EvtClose(handle);
                 }
             }
-            self.log("Closed Windows event handles.");
         }
-        self.log("Application shutting down.");
         if let Some(mut writer) = self.log_file.take() {
              if let Err(e) = writer.flush() {
                  eprintln!("Error flushing log file on drop: {}", e);

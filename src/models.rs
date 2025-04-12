@@ -36,16 +36,6 @@ pub enum PreviewViewMode {
     RawXml,
 }
 
-/// Trait for components that can be navigated with scroll actions
-pub trait Navigable {
-    fn scroll_up(&mut self);
-    fn scroll_down(&mut self, visible_height: usize);
-    fn page_up(&mut self);
-    fn page_down(&mut self, visible_height: usize);
-    fn go_to_top(&mut self);
-    fn go_to_bottom(&mut self, visible_height: usize);
-}
-
 /// Represents an event level filter for displaying events.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum EventLevelFilter {

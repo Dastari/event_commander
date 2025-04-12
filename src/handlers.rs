@@ -15,7 +15,6 @@ pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostK
             match key.code {
                 KeyCode::Enter | KeyCode::Esc => {
                     dialog.dismiss();
-                    app_state.log("Status dialog dismissed.");
                 }
                 _ => { /* Consume key */ }
             }
@@ -100,7 +99,7 @@ fn handle_help_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> Po
 }
 
 fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
-    let mut action = PostKeyPressAction::None;
+    let action = PostKeyPressAction::None;
     let text = &mut app_state.search_term;
     let cursor = &mut app_state.search_cursor;
     let mut perform_search = false;
@@ -153,41 +152,20 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
                 }
             }
         }
-        KeyCode::Left | KeyCode::Char('h') => {
+        KeyCode::Left => {
             *cursor = cursor.saturating_sub(1);
         }
-        KeyCode::Right | KeyCode::Char('l') => {
+        KeyCode::Right => {
             // Ensure cursor doesn't go beyond the number of characters
             *cursor = (*cursor + 1).min(text.chars().count());
         }
-        KeyCode::Home | KeyCode::Char('0') => {
+        KeyCode::Home => {
              *cursor = 0;
         }
-        KeyCode::End | KeyCode::Char('$') => {
+        KeyCode::End => {
             *cursor = text.chars().count();
         }
-        KeyCode::Char('x') => { // Delete character under cursor
-            if *cursor < text.chars().count() {
-                 // Find byte index for character at cursor
-                 if let Some((byte_idx, _)) = text.char_indices().nth(*cursor) {
-                    text.remove(byte_idx);
-                    // Cursor position doesn't change, but cap at new length
-                    *cursor = (*cursor).min(text.chars().count());
-                }
-            }
-        }
-         KeyCode::Char('D') => { // Delete from cursor to end of line
-            if *cursor < text.chars().count() {
-                 // Find byte index for character at cursor
-                 if let Some((byte_idx, _)) = text.char_indices().nth(*cursor) {
-                    text.truncate(byte_idx);
-                    // Cursor remains at the same index (now end of string)
-                     *cursor = (*cursor).min(text.chars().count()); // Cap cursor
-                }
-            } else {
-                // If cursor is already at end, D does nothing
-            }
-        }
+        
         _ => {}
     }
     
@@ -260,42 +238,19 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                     }
                 }
             }
-            KeyCode::Left | KeyCode::Char('h') => {
+            KeyCode::Left => {
                 *cursor = cursor.saturating_sub(1);
             }
-            KeyCode::Right | KeyCode::Char('l') => {
+            KeyCode::Right => {
                 *cursor = (*cursor + 1).min(text.chars().count());
             }
-            KeyCode::Home | KeyCode::Char('0') => {
+            KeyCode::Home => {
                 *cursor = 0;
             }
-            KeyCode::End | KeyCode::Char('$') => {
+            KeyCode::End => {
                 *cursor = text.chars().count();
             }
-            KeyCode::Char('x') => {
-                if *cursor < text.chars().count() {
-                    if let Some((byte_idx, _)) = text.char_indices().nth(*cursor) {
-                        text.remove(byte_idx);
-                        *cursor = (*cursor).min(text.chars().count()); // Cap cursor
-                         if app_state.filter_dialog_focus == FilterFieldFocus::Source {
-                             app_state.update_filtered_sources();
-                         }
-                    }
-                }
-            }
-            KeyCode::Char('D') => {
-                if *cursor < text.chars().count() {
-                    if let Some((byte_idx, _)) = text.char_indices().nth(*cursor) {
-                        text.truncate(byte_idx);
-                        *cursor = (*cursor).min(text.chars().count()); // Cap cursor
-                         if app_state.filter_dialog_focus == FilterFieldFocus::Source {
-                             app_state.update_filtered_sources();
-                         }
-                    }
-                } else {
-                    // D at end does nothing
-                }
-            }
+            
             // Exclude Enter, Tab, Backtab, Esc, Arrows (Up/Down/Left/Right specific to Level/Source list)
             // These are handled outside this `if let` block or below
             _ => { /* Other keys ignored for text input */ }
@@ -336,7 +291,7 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                     }
                 }
                 app_state.update_filtered_sources(); 
-                app_state.filter_dialog_focus = FilterFieldFocus::Level;
+                app_state.filter_dialog_focus = FilterFieldFocus::Apply;
                 app_state.filter_source_cursor = app_state.filter_dialog_source_input.chars().count(); // Move cursor to end
             }
             FilterFieldFocus::EventId => {

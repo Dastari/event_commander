@@ -33,11 +33,16 @@ const THEME_FOOTER_FG: Color = Color::Gray;
 const BORDER_TYPE_THEME: BorderType = BorderType::Double;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[allow(dead_code)]
 const WHITE: Color = Color::White;
 const GRAY: Color = Color::Gray;
+#[allow(dead_code)]
 const DARK_GRAY: Color = Color::DarkGray;
+#[allow(dead_code)]
 const RED: Color = Color::Red;
+#[allow(dead_code)]
 const GREEN: Color = Color::Green;
+#[allow(dead_code)]
 const MAGENTA: Color = Color::Magenta;
 
 lazy_static! {
@@ -676,11 +681,14 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         frame.render_widget(Paragraph::new(event_id_text).style(event_id_input_style), chunks[1]);
 
         // Level
+        let is_level_focused = app_state.filter_dialog_focus == FilterFieldFocus::Level;
+        let level_name_style = if is_level_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
+        let level_arrow_style = if is_level_focused { *SELECTION_STYLE } else { base_text_style }; // Use selection style for arrows only when focused
         let level_text = Line::from(vec![
             Span::raw("Level: ").style(base_text_style),
-            Span::styled("< ", *SELECTION_STYLE),
-            Span::styled(app_state.filter_dialog_level.display_name(), *DIALOG_SELECTION_STYLE),
-            Span::styled(" >", *SELECTION_STYLE),
+            Span::styled("< ", level_arrow_style),
+            Span::styled(app_state.filter_dialog_level.display_name(), level_name_style), // Use conditional style
+            Span::styled(" >", level_arrow_style),
         ]);
         frame.render_widget(Paragraph::new(level_text), chunks[2]);
 
