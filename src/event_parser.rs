@@ -25,12 +25,10 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
     let mut inside_event_id = false;
     let mut inside_level = false;
 
-    // Specific handling for WER data map
-    let mut wer_data_map = HashMap::new();
-    let mut inside_event_data_for_wer = false;
-    let mut current_data_name = None;
-    let mut current_data_value = String::new();
-    let mut inside_data_for_wer = false;
+    // Variables for parsing EventData/UserData
+    let mut event_data_values = Vec::new(); // To store individual <Data> or text nodes
+    let mut current_text_buffer = String::new(); // Accumulate text between tags
+    let mut inside_event_or_user_data = false;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -67,21 +65,14 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
                             }
                         }
                     }
-                    "EventData" => {
-                        inside_event_data_for_wer = true;
+                    "EventData" | "UserData" => {
+                        inside_event_or_user_data = true;
+                        current_text_buffer.clear(); // Clear buffer at the start of the section
                     }
-                    "Data" if inside_event_data_for_wer => {
-                        inside_data_for_wer = true;
-                        current_data_value.clear();
-                        current_data_name = None;
-                        for attr_result in e.attributes() {
-                            if let Ok(attr) = attr_result {
-                                let attr_key = std::str::from_utf8(attr.key.local_name().into_inner()).unwrap_or("");
-                                if attr_key == "Name" {
-                                    current_data_name = Some(attr.unescape_value().unwrap_or_default().to_string());
-                                }
-                            }
-                        }
+                    "Data" if inside_event_or_user_data => {
+                        // Clear buffer specifically for each Data tag start
+                        current_text_buffer.clear();
+                        // Removed WER attribute parsing here
                     }
                     _ => {},
                 }
@@ -97,33 +88,48 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
                     }
                     "EventID" => inside_event_id = false,
                     "Level" => inside_level = false,
-                    "EventData" => {
-                        inside_event_data_for_wer = false;
-                    }
-                    "Data" if inside_data_for_wer => {
-                        inside_data_for_wer = false;
-                        if let Some(name) = current_data_name.take() {
-                            wer_data_map.insert(name, current_data_value.clone());
+                    "EventData" | "UserData" => {
+                        // Capture any trailing text directly within EventData/UserData
+                        let trimmed_text = current_text_buffer.trim();
+                        if !trimmed_text.is_empty() && event_data_values.is_empty() {
+                            // Only add if no <Data> tags were processed
+                            event_data_values.push(trimmed_text.to_string());
                         }
+                        current_text_buffer.clear();
+                        inside_event_or_user_data = false;
+                    }
+                    "Data" if inside_event_or_user_data => {
+                        // Process accumulated text when </Data> is encountered
+                        let trimmed_text = current_text_buffer.trim();
+                        if !trimmed_text.is_empty() {
+                            event_data_values.push(trimmed_text.to_string());
+                        }
+                        current_text_buffer.clear(); // Clear after processing
+                        // Removed WER map insertion here
                     }
                     _ => {},
                 }
             }
             Ok(Event::Text(ref e)) => {
-                let text = e.unescape().unwrap_or_default().to_string();
-                if inside_event_id {
-                    id = text;
-                } else if inside_level {
-                    level = match text.as_str() {
-                        "1" => "Critical".to_string(),
-                        "2" => "Error".to_string(),
-                        "3" => "Warning".to_string(),
-                        "0" | "4" => "Information".to_string(),
-                        "5" => "Verbose".to_string(),
-                        _ => format!("Unknown({})", text),
-                    };
-                } else if inside_data_for_wer {
-                     current_data_value.push_str(&text);
+                let text_result = e.unescape();
+                if let Ok(text) = text_result {
+                     let text_str = text.to_string(); // Convert Cow<str> to String
+                    if inside_event_id {
+                        id = text_str;
+                    } else if inside_level {
+                        level = match text_str.as_str() { // Use text_str here
+                            "1" => "Critical".to_string(),
+                            "2" => "Error".to_string(),
+                            "3" => "Warning".to_string(),
+                            "0" | "4" => "Information".to_string(),
+                            "5" => "Verbose".to_string(),
+                            _ => format!("Unknown({})", text_str),
+                        };
+                    } else if inside_event_or_user_data {
+                        // Append text content if inside EventData/UserData/Data
+                        current_text_buffer.push_str(&text_str);
+                        // Removed WER value accumulation here
+                    }
                 }
             }
             Ok(Event::Eof) => break,
@@ -133,7 +139,10 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
         buf.clear();
     }
 
-    // --- Second Pass: Extract and process XML fragment after </System> --- 
+    // --- Second Pass: Extract and process XML fragment after </System> ---
+    // This second pass might be redundant now that we capture EventData/UserData in the first pass.
+    // Let's comment it out for now and rely on the first pass extraction.
+    /*
     if let Some(start_pos) = system_data_end_pos {
         if let Some(end_pos) = xml.rfind("</Event>") {
             if end_pos > start_pos {
@@ -169,18 +178,30 @@ pub fn parse_event_xml(xml: &str) -> DisplayEvent {
             }
         }
     }
-
-    // Commented out source name cleanup
-    // if source != "<Parse Error>" && source.starts_with("Microsoft-Windows-") {
-    //     source = source.trim_start_matches("Microsoft-Windows-").to_string();
-    // }
-
-    // WER Formatting check
-    let final_message = if provider_name_original == "Microsoft-Windows-Windows Error Reporting" && id == "1001" && !wer_data_map.is_empty() {
-        format_wer_event_data_from_map(&wer_data_map)
+    */
+    // Construct the fallback message string from the collected values
+    let final_message = if provider_name_original == "Microsoft-Windows-Windows Error Reporting" && id == "1001" {
+        // Attempt WER formatting using the extracted values. Needs a way to reconstruct the map or pass values.
+        // For now, just join the values like other events.
+        // TODO: Re-implement WER-specific formatting if needed, potentially requiring
+        //       parsing the Name attribute of Data tags again or a different approach.
+        if !event_data_values.is_empty() {
+             event_data_values.join("\n")
+        } else {
+            "<WER event data found but failed to parse/format>".to_string()
+        }
+    } else if !event_data_values.is_empty() {
+        event_data_values.join("\n") // Join extracted values for fallback message
     } else {
-        event_data_message
+        "<No relevant event data found>".to_string()
     };
+
+    // --- Temporary Debug Logging ---
+    /* eprintln!(
+        "[Parser Debug] EventID: {}, Provider: {}, DataValues: {:?}, FinalMessage: {:?}", 
+        id, provider_name_original, event_data_values, final_message
+    ); */
+    // --- End Temporary Debug Logging ---
 
     DisplayEvent {
         level,

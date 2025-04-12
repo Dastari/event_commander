@@ -132,21 +132,27 @@ impl AppState {
                     event.provider_name_original // Display full provider name
                 );
 
+                // Determine the primary message content: Prefer formatted, fallback to parsed
+                let message_content = event.formatted_message
+                    .as_ref()
+                    .filter(|fm| !fm.is_empty()) // Use formatted if it exists and isn't empty
+                    .map(|fm| fm.as_str())
+                    .unwrap_or_else(|| {
+                        // Fallback: use parsed message if not empty/placeholder
+                        // Note: event.message now contains the joined event_data_values from the parser
+                        if !event.message.is_empty() && !event.message.starts_with("<No") {
+                            &event.message
+                        } else {
+                            // If both formatted and parsed are unavailable/empty
+                            "<No message content found>" // Use a more accurate placeholder
+                        }
+                    });
+
                 // Build the final content string for the "Formatted" view
                 let mut combined_content = header.clone(); // Start with header
-
-                // Append the parsed message data (from EventData/UserData)
-                if !event.message.is_empty() && !event.message.starts_with("<No") {
-                    // Always add the message data header now
-                    combined_content.push_str("\n--- Message Data ---\n");
-                    combined_content.push_str(&event.message);
-                    combined_content.push('\n');
-                }
-                
-                // If neither friendly nor parsed message exists, add a placeholder
-                if event.message.is_empty() || event.message.starts_with("<No") {
-                    combined_content.push_str("\n--- Message ---\n<No message data found in event XML>\n");
-                }
+                combined_content.push_str("\n--- Message ---\n"); // Use a consistent header
+                combined_content.push_str(message_content);
+                combined_content.push('\n');
 
                 // Update AppState fields
                 self.preview_event_id = Some(format!("{}_{}", event.source, event.id));
@@ -331,7 +337,6 @@ impl AppState {
             self.selected_log_name = crate::models::LOG_NAMES[index].to_string();
             self.events.clear();
             self.table_state.select(Some(0));
-            self.update_preview_for_selection();
             self.no_more_events = false;
             self.active_filter = None; // Also clear filter when changing log
             #[cfg(target_os = "windows")]
