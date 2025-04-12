@@ -5,6 +5,7 @@ use std::io::{BufWriter};
 use std::fs::File;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Duration, Utc};
 
 #[cfg(target_os = "windows")]
 use windows::Win32::System::EventLog::EVT_HANDLE;
@@ -40,13 +41,25 @@ pub enum PreviewViewMode {
 }
 
 /// Represents an event level filter for displaying events.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum EventLevelFilter {
     #[default]
     All,
     Information,
     Warning,
     Error,
+}
+
+/// Represents the time range options for filtering events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum TimeFilterOption {
+    #[default]
+    AnyTime,
+    LastHour,
+    Last12Hours,
+    Last24Hours,
+    Last7Days,
+    Last30Days,
 }
 
 /// Represents which panel is currently focused in the TUI.
@@ -62,14 +75,16 @@ pub struct FilterCriteria {
     pub source: Option<String>,
     pub event_id: Option<String>,
     pub level: EventLevelFilter,
+    pub time_filter: TimeFilterOption,
 }
 
 /// Represents which field is focused in the filter dialog.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FilterFieldFocus {
-    Source,
     EventId,
     Level,
+    Time,
+    Source,
     Apply,
     Clear,
 }
@@ -113,6 +128,7 @@ pub struct AppState {
     pub filter_dialog_source_index: usize,
     pub filter_dialog_event_id: String,
     pub filter_dialog_level: EventLevelFilter,
+    pub filter_dialog_time: TimeFilterOption,
     pub available_sources: Option<Vec<String>>,
     pub filter_dialog_source_input: String,
     pub filter_dialog_filtered_sources: Vec<(usize, String)>,
@@ -122,6 +138,7 @@ pub struct AppState {
     pub search_cursor: usize,
     pub help_dialog_visible: bool,
     pub help_scroll_position: usize,
+    pub is_initial_load_pending: bool,
 }
 
 // Constants
@@ -180,12 +197,65 @@ impl EventLevelFilter {
     }
 }
 
+impl TimeFilterOption {
+    /// Cycles to the next time filter option.
+    pub fn next(&self) -> Self {
+        match self {
+            Self::AnyTime => Self::LastHour,
+            Self::LastHour => Self::Last12Hours,
+            Self::Last12Hours => Self::Last24Hours,
+            Self::Last24Hours => Self::Last7Days,
+            Self::Last7Days => Self::Last30Days,
+            Self::Last30Days => Self::AnyTime,
+        }
+    }
+
+    /// Cycles to the previous time filter option.
+    pub fn previous(&self) -> Self {
+        match self {
+            Self::AnyTime => Self::Last30Days,
+            Self::LastHour => Self::AnyTime,
+            Self::Last12Hours => Self::LastHour,
+            Self::Last24Hours => Self::Last12Hours,
+            Self::Last7Days => Self::Last24Hours,
+            Self::Last30Days => Self::Last7Days,
+        }
+    }
+
+    /// Returns a displayable name for the time filter option.
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::AnyTime => "Any Time",
+            Self::LastHour => "Last Hour",
+            Self::Last12Hours => "Last 12 Hours",
+            Self::Last24Hours => "Last 24 Hours",
+            Self::Last7Days => "Last 7 Days",
+            Self::Last30Days => "Last 30 Days",
+        }
+    }
+
+    /// Calculates the start time for the filter based on the option.
+    /// Returns None for AnyTime.
+    pub fn get_start_time(&self) -> Option<DateTime<Utc>> {
+        let now = Utc::now();
+        match self {
+            Self::AnyTime => None,
+            Self::LastHour => Some(now - Duration::hours(1)),
+            Self::Last12Hours => Some(now - Duration::hours(12)),
+            Self::Last24Hours => Some(now - Duration::days(1)),
+            Self::Last7Days => Some(now - Duration::days(7)),
+            Self::Last30Days => Some(now - Duration::days(30)),
+        }
+    }
+}
+
 impl FilterFieldFocus {
     /// Cycles to the next field in the filter dialog.
     pub fn next(&self) -> Self {
         match self {
             Self::EventId => Self::Level,
-            Self::Level => Self::Source,
+            Self::Level => Self::Time,
+            Self::Time => Self::Source,
             Self::Source => Self::Apply,
             Self::Apply => Self::Clear,
             Self::Clear => Self::EventId,
@@ -197,7 +267,8 @@ impl FilterFieldFocus {
         match self {
             Self::EventId => Self::Clear,
             Self::Level => Self::EventId,
-            Self::Source => Self::Level,
+            Self::Time => Self::Level,
+            Self::Source => Self::Time,
             Self::Apply => Self::Source,
             Self::Clear => Self::Apply,
         }

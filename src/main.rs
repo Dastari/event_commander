@@ -19,6 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = terminal::init_terminal()?;
     let mut app_state = models::AppState::new();
     
+    // Put back initial load call
     #[cfg(target_os = "windows")]
     app_state.start_or_continue_log_load(true);
     
@@ -27,6 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         
         let mut post_action = PostKeyPressAction::None;
         
+        // Handle input
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
@@ -35,6 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         
+        // Handle actions resulting from key presses
         match post_action {
             PostKeyPressAction::ReloadData => {
                 #[cfg(target_os = "windows")]
@@ -47,9 +50,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     app_state.events.clear();
                     app_state.table_state.select(None);
                     app_state.no_more_events = false;
-                    app_state.is_loading = false;
                     app_state.preview_scroll = 0;
-                    app_state.start_or_continue_log_load(true);
+                    // Call load directly again
+                    app_state.start_or_continue_log_load(true); 
                 }
             }
             PostKeyPressAction::ShowConfirmation(title, msg) => {
@@ -76,10 +79,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     app_state.filter_dialog_event_id = active.event_id.clone().unwrap_or_default();
                     app_state.filter_dialog_level = active.level;
+                    app_state.filter_dialog_time = active.time_filter;
                 } else {
                     app_state.filter_dialog_source_input.clear();
                     app_state.filter_dialog_event_id.clear();
-                    app_state.filter_dialog_level = models::EventLevelFilter::All;
+                    app_state.filter_dialog_level = models::EventLevelFilter::default();
+                    app_state.filter_dialog_time = models::TimeFilterOption::default();
                 }
                 app_state.update_filtered_sources();
                 app_state.filter_dialog_focus = models::FilterFieldFocus::EventId;

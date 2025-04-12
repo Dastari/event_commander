@@ -294,9 +294,15 @@ fn render_event_table(frame: &mut Frame, app_state: &mut AppState, area: Rect) {
     let is_focused = app_state.focus == PanelFocus::Events;
     let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { THEME_FOCUSED_BORDER } else { THEME_BORDER }));
 
+    // Add loading indicator text conditionally
+    let loading_indicator = if app_state.is_loading { " Loading..." } else { "" };
+    let events_title_text = format!(" Events: {} ", app_state.selected_log_name);
+    let events_count_text = format!(" {} Events Loaded{} ", app_state.events.len(), loading_indicator);
+
     let block = Block::new()
-        .title(Title::from(Span::styled(format!(" Events: {} ", app_state.selected_log_name), *TITLE_STYLE)).alignment(Alignment::Left).position(Position::Top))
-        .title(Title::from(Span::styled(format!(" {} Events Loaded ", app_state.events.len()), *TITLE_STYLE)).alignment(Alignment::Center).position(Position::Bottom))
+        .title(Title::from(Span::styled(events_title_text, *TITLE_STYLE)).alignment(Alignment::Left).position(Position::Top))
+        // Revert to using *TITLE_STYLE for the bottom title
+        .title(Title::from(Span::styled(events_count_text, *TITLE_STYLE)).alignment(Alignment::Center).position(Position::Bottom))
         .borders(Borders::ALL)
         .border_style(border_style)
         .border_type(BORDER_TYPE_THEME)
@@ -594,7 +600,7 @@ fn render_search_bar(frame: &mut Frame, app_state: &mut AppState) {
 
 fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
     if app_state.is_filter_dialog_visible {
-        const DIALOG_FIXED_HEIGHT: u16 = 15;
+        const DIALOG_FIXED_HEIGHT: u16 = 17;
         const DIALOG_WIDTH: u16 = 60;
         const FILTER_LIST_MAX_HEIGHT: u16 = 5;
 
@@ -639,6 +645,7 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         const EVENT_ID_LABEL_HEIGHT: u16 = 1;
         const EVENT_ID_INPUT_HEIGHT: u16 = 1;
         const LEVEL_SELECT_HEIGHT: u16 = 1;
+        const TIME_SELECT_HEIGHT: u16 = 1;
         const SOURCE_LABEL_HEIGHT: u16 = 1;
         const SOURCE_INPUT_HEIGHT: u16 = 1;
         const BUTTON_ROW_HEIGHT: u16 = 1;
@@ -647,6 +654,7 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
             Constraint::Length(EVENT_ID_LABEL_HEIGHT),
             Constraint::Length(EVENT_ID_INPUT_HEIGHT),
             Constraint::Length(LEVEL_SELECT_HEIGHT),
+            Constraint::Length(TIME_SELECT_HEIGHT),
             Constraint::Length(SOURCE_LABEL_HEIGHT),
             Constraint::Length(SOURCE_INPUT_HEIGHT),
             Constraint::Length(list_render_height),
@@ -660,7 +668,7 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
             .constraints(constraints)
             .split(inner_area);
 
-        if chunks.len() < 8 {
+        if chunks.len() < 9 {
              return;
         }
 
@@ -691,7 +699,18 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         ]);
         frame.render_widget(Paragraph::new(level_text), chunks[2]);
 
-        frame.render_widget(Paragraph::new("Source:").style(base_text_style), chunks[3]);
+        let is_time_focused = app_state.filter_dialog_focus == FilterFieldFocus::Time;
+        let time_name_style = if is_time_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
+        let time_arrow_style = if is_time_focused { *SELECTION_STYLE } else { base_text_style };
+        let time_text = Line::from(vec![
+            Span::raw("Time Range: ").style(base_text_style),
+            Span::styled("< ", time_arrow_style),
+            Span::styled(app_state.filter_dialog_time.display_name(), time_name_style),
+            Span::styled(" >", time_arrow_style),
+        ]);
+        frame.render_widget(Paragraph::new(time_text), chunks[3]);
+
+        frame.render_widget(Paragraph::new("Source:").style(base_text_style), chunks[4]);
         let source_style = if is_source_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
         let source_input_display = if is_source_focused {
             let mut display_text = app_state.filter_dialog_source_input.clone();
@@ -704,7 +723,7 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         } else {
             format!(" {}", app_state.filter_dialog_source_input)
         };
-        frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[4]);
+        frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[5]);
 
         if list_area_should_show {
             if sources_found {
@@ -717,11 +736,11 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
                     .highlight_symbol(">");
                 let mut list_state = ListState::default();
                 list_state.select(app_state.filter_dialog_filtered_source_selection);
-                frame.render_stateful_widget(list, chunks[5], &mut list_state);
+                frame.render_stateful_widget(list, chunks[6], &mut list_state);
             } else {
                 let no_sources_msg = Paragraph::new("No matching sources found")
                     .style(base_text_style.add_modifier(Modifier::ITALIC));
-                frame.render_widget(no_sources_msg, chunks[5]);
+                frame.render_widget(no_sources_msg, chunks[6]);
             }
         }
 
@@ -736,7 +755,7 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
             Span::raw(" ").style(base_text_style),
             Span::styled(" [ Clear ] ", clear_style),
         ]).alignment(Alignment::Center);
-        frame.render_widget(Paragraph::new(button_line).style(base_text_style), chunks[7]);
+        frame.render_widget(Paragraph::new(button_line).style(base_text_style), chunks[8]);
     }
 }
 

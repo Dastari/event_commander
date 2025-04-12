@@ -211,11 +211,13 @@ pub fn load_available_sources(app: &mut AppState) -> Option<Vec<String>> {
 #[cfg(target_os = "windows")]
 impl AppState {
     pub fn start_or_continue_log_load(&mut self, initial_load: bool) {
+        
+        // Put back is_loading = true, adjust check
         if self.is_loading || (!initial_load && self.no_more_events) {
             return;
         }
         self.is_loading = true;
-        
+
         // Setup initial query if it's the first load
         if initial_load {
             self.events.clear();
@@ -234,7 +236,7 @@ impl AppState {
                 
             if self.selected_log_name.is_empty() {
                 self.show_error("Loading Error", "No log name selected.");
-                self.is_loading = false;
+                self.is_loading = false; 
                 return;
             }
             
@@ -261,7 +263,7 @@ impl AppState {
                             "Query Error",
                             &format!("Failed to query log '{}': {}", self.selected_log_name, e),
                         );
-                        self.is_loading = false;
+                        self.is_loading = false; // Put back is_loading = false on error
                         return;
                     }
                 }
@@ -325,13 +327,15 @@ impl AppState {
         // Update preview based on the new data and selection
         self.update_preview_for_selection();
 
-        self.is_loading = false;
+        self.is_loading = false; // This should already be at the end
     }
     
     /// Builds an XPath query string based on the active filter criteria.
     pub fn build_xpath_from_filter(&self) -> String {
         if let Some(filter) = &self.active_filter {
             let mut conditions = Vec::new();
+
+            // Source Filter
             if let Some(source) = &filter.source {
                 if !source.is_empty() {
                     conditions.push(format!(
@@ -340,11 +344,15 @@ impl AppState {
                     ));
                 }
             }
+
+            // Event ID Filter
             if let Some(id) = &filter.event_id {
                 if !id.is_empty() && id.chars().all(char::is_numeric) {
                     conditions.push(format!("System/EventID={}", id));
                 }
             }
+
+            // Level Filter
             let level_condition = match filter.level {
                 EventLevelFilter::Information => {
                     Some("(System/Level=0 or System/Level=4)".to_string())
@@ -356,13 +364,25 @@ impl AppState {
             if let Some(cond) = level_condition {
                 conditions.push(cond);
             }
+
+            // Time Filter - NEW
+            if let Some(start_time_utc) = filter.time_filter.get_start_time() {
+                 // Format timestamp for XPath (ISO 8601/RFC 3339 format)
+                 // Example: 2023-10-27T10:30:00.000Z
+                let timestamp_str = start_time_utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                // Try direct string comparison instead of timediff
+                conditions.push(format!(
+                    "System/TimeCreated[@SystemTime >= '{}']", // Use direct comparison
+                    timestamp_str
+                ));
+             }
+
             if conditions.is_empty() {
                 "*".to_string()
             } else {
                 format!("*[{}]", conditions.join(" and "))
             }
         } else {
-            // If no active filter, return all events
             "*".to_string()
         }
     }

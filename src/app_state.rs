@@ -1,4 +1,4 @@
-use crate::models::{AppState, FilterCriteria, EventLevelFilter, PanelFocus, DisplayEvent, StatusDialog, LOG_NAMES, FilterFieldFocus, PreviewViewMode};
+use crate::models::{AppState, FilterCriteria, EventLevelFilter, PanelFocus, DisplayEvent, StatusDialog, LOG_NAMES, FilterFieldFocus, PreviewViewMode, TimeFilterOption};
 use ratatui::widgets::TableState;
 use ratatui::text::{Line, Span, Text};
 use ratatui::style::{Color, Style};
@@ -67,6 +67,7 @@ impl AppState {
             filter_dialog_source_index: 0,
             filter_dialog_event_id: String::new(),
             filter_dialog_level: EventLevelFilter::default(),
+            filter_dialog_time: TimeFilterOption::default(),
             available_sources: None,
             filter_dialog_source_input: String::new(),
             filter_dialog_filtered_sources: Vec::new(),
@@ -76,6 +77,7 @@ impl AppState {
             search_cursor: 0,
             help_dialog_visible: false,
             help_scroll_position: 0,
+            is_initial_load_pending: true,
         };
 
         app_state

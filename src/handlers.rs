@@ -280,6 +280,9 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                 app_state.filter_dialog_focus = FilterFieldFocus::Level;
             }
             FilterFieldFocus::Level => {
+                app_state.filter_dialog_focus = FilterFieldFocus::Time;
+            }
+            FilterFieldFocus::Time => {
                 app_state.filter_dialog_focus = FilterFieldFocus::Source;
             }
             FilterFieldFocus::Apply => {
@@ -292,8 +295,9 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                     source: selected_source,
                     event_id: selected_event_id,
                     level: app_state.filter_dialog_level,
+                    time_filter: app_state.filter_dialog_time,
                 };
-                if criteria.source.is_none() && criteria.event_id.is_none() && criteria.level == crate::models::EventLevelFilter::All {
+                if criteria.source.is_none() && criteria.event_id.is_none() && criteria.level == crate::models::EventLevelFilter::All && criteria.time_filter == crate::models::TimeFilterOption::AnyTime {
                     app_state.active_filter = None;
                 } else {
                     app_state.active_filter = Some(criteria);
@@ -315,6 +319,9 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
             FilterFieldFocus::Level => {
                 app_state.filter_dialog_level = app_state.filter_dialog_level.previous();
             }
+            FilterFieldFocus::Time => {
+                app_state.filter_dialog_time = app_state.filter_dialog_time.previous();
+            }
              FilterFieldFocus::Apply | FilterFieldFocus::Clear => {
                  app_state.filter_dialog_focus = app_state.filter_dialog_focus.previous();
              }
@@ -323,6 +330,9 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
         KeyCode::Right => match app_state.filter_dialog_focus {
             FilterFieldFocus::Level => {
                 app_state.filter_dialog_level = app_state.filter_dialog_level.next();
+            }
+            FilterFieldFocus::Time => {
+                app_state.filter_dialog_time = app_state.filter_dialog_time.next();
             }
             FilterFieldFocus::Apply | FilterFieldFocus::Clear => {
                  app_state.filter_dialog_focus = app_state.filter_dialog_focus.next();
