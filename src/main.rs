@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     app_state.filter_dialog_level = models::EventLevelFilter::All;
                 }
                 app_state.update_filtered_sources();
-                app_state.filter_dialog_focus = models::FilterFieldFocus::Source;
+                app_state.filter_dialog_focus = models::FilterFieldFocus::EventId;
                 app_state.is_filter_dialog_visible = true;
             }
             PostKeyPressAction::Quit => break,

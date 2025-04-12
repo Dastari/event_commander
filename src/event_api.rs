@@ -193,7 +193,6 @@ pub fn load_available_sources(app: &mut AppState) -> Option<Vec<String>> {
     if sources.is_empty() {
         None
     } else {
-        sources.insert(0, "[Any Source]".to_string());
         sources.sort_unstable_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
         Some(sources)
     }

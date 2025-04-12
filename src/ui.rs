@@ -88,7 +88,7 @@ lazy_static! {
         .position(Position::Bottom).alignment(Alignment::Center);
 
     static ref FILTER_CANCEL_LINE: Line<'static> = Line::from(vec![
-        KEY_ESC.clone(), Span::raw(" Cancel"),
+        KEY_ESC.clone(),
     ]).alignment(Alignment::Center);
     static ref FILTER_CANCEL_TITLE: Title<'static> = Title::from(FILTER_CANCEL_LINE.clone())
         .position(Position::Bottom).alignment(Alignment::Center);
@@ -106,35 +106,84 @@ lazy_static! {
     static ref HELP_DISMISS_TITLE: Title<'static> = Title::from(HELP_DISMISS_TEXT_LINE.clone())
         .position(Position::Bottom).alignment(Alignment::Center);
 
+    // Styling for the keybindings in the help dialog
+    static ref HELP_KEY_STYLE: Style = DIALOG_DEFAULT_STYLE.patch(Style::new().add_modifier(Modifier::BOLD));
+    static ref HELP_SECTION_STYLE: Style = DIALOG_DEFAULT_STYLE.patch(Style::new().add_modifier(Modifier::BOLD).add_modifier(Modifier::UNDERLINED));
+    static ref HELP_BODY_STYLE: Style = *DIALOG_DEFAULT_STYLE;
+    static ref HELP_URL_STYLE: Style = DIALOG_DEFAULT_STYLE.patch(Style::new().add_modifier(Modifier::ITALIC));
+
     static ref HELP_TEXT_LINES: Vec<Line<'static>> = vec![
-        Line::from(Span::styled("Event Commander", BOLD_STYLE.patch(Style::new().fg(THEME_FG)))),
-        Line::from(Span::raw("A simple TUI for browsing Windows Event Logs.")),
-        Line::from(Span::raw("")),
+        Line::from(Span::styled("Event Commander", *HELP_KEY_STYLE)),
+        Line::from(Span::styled("A TUI for browsing Windows Event Logs.", *HELP_BODY_STYLE)),
+        Line::from(""), // Spacer
         Line::from(vec![
-            Span::raw("Developed by: "),
-            Span::styled("Toby Martin", Style::new().fg(GREEN)),
+            Span::styled("Developed by: ", *HELP_BODY_STYLE),
+            Span::styled("Toby Martin", *HELP_BODY_STYLE),
         ]),
         Line::from(vec![
-            Span::raw("Source Code: "),
-            Span::styled(
-                "https://github.com/Dastari/event_commander",
-                DEFAULT_STYLE.patch(Style::new().fg(THEME_FG).add_modifier(Modifier::UNDERLINED)),
-            ),
+            Span::styled("Source Code: ", *HELP_BODY_STYLE),
+            Span::styled("https://github.com/Dastari/event_commander", *HELP_URL_STYLE),
         ]),
-        Line::from(Span::raw("")),
-        Line::from(Span::styled("License: GPL-3.0-or-later", Style::new().fg(MAGENTA))),
-        Line::from(Span::raw("  This program is free software...")),
-        Line::from(Span::raw("  it under the terms...")),
-        Line::from(Span::raw("  the Free Software Foundation...")),
-        Line::from(Span::raw("  (at your option) any later version...")),
-        Line::from(Span::raw("")),
-        Line::from(Span::styled("--- Keybindings ---", ALT_FG_STYLE.patch(Style::new().add_modifier(Modifier::BOLD)))),
-        Line::from(Span::raw("")),
-        Line::from(vec![
-            Span::styled("  [q]      ", *KEY_STYLE),
-            Span::raw("Quit application"),
-        ]),
-        // Add more keybindings as needed...
+        Line::from(""), // Spacer
+        Line::from(Span::styled("License: GPL-3.0-or-later", *HELP_BODY_STYLE)),
+        Line::from(Span::styled("THE GNU GPLV3 GRANTS USERS FREEDOM TO RUN, STUDY, SHARE, AND MODIFY THE SOFTWARE. DERIVATIVE WORKS MUST ALSO BE DISTRIBUTED AS OPEN SOURCE.", *HELP_BODY_STYLE)),
+        Line::from(""), // Spacer
+        Line::from(Span::styled("--- Global Keys ---", *HELP_SECTION_STYLE)),
+        Line::from(""),
+        Line::from(vec![Span::styled("  [q]          ", *HELP_KEY_STYLE), Span::styled("Quit application", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [F1]         ", *HELP_KEY_STYLE), Span::styled("Show/Hide this Help dialog", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [1]..[5]    ", *HELP_KEY_STYLE), Span::styled("Switch Event Log (Application, System, etc.)", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Tab]        ", *HELP_KEY_STYLE), Span::styled("Cycle focus forward (Events -> Preview)", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Shift+Tab]  ", *HELP_KEY_STYLE), Span::styled("Cycle focus backward (Preview -> Events)", *HELP_BODY_STYLE)]), 
+        Line::from(""), // Spacer
+        Line::from(Span::styled("--- Event List Panel --- (When Focused)", *HELP_SECTION_STYLE)),
+        Line::from(""),
+        Line::from(vec![Span::styled("  [↑]/[↓]      ", *HELP_KEY_STYLE), Span::styled("Scroll up/down one event", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [PgUp]/[PgDn]", *HELP_KEY_STYLE), Span::styled("Scroll up/down one page", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Home]/[g]   ", *HELP_KEY_STYLE), Span::styled("Go to top event", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [End]/[G]    ", *HELP_KEY_STYLE), Span::styled("Go to bottom event", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [s]          ", *HELP_KEY_STYLE), Span::styled("Toggle sort order (Date/Time)", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [l]          ", *HELP_KEY_STYLE), Span::styled("Cycle minimum level filter (All->Info->Warn->Err)", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [f]          ", *HELP_KEY_STYLE), Span::styled("Open Advanced Filter dialog", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [/]          ", *HELP_KEY_STYLE), Span::styled("Open Search input", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [n]          ", *HELP_KEY_STYLE), Span::styled("Find next search match", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [p]          ", *HELP_KEY_STYLE), Span::styled("Find previous search match", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Enter]      ", *HELP_KEY_STYLE), Span::styled("Focus Preview panel for selected event", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [←]/[→]    ", *HELP_KEY_STYLE), Span::styled("Cycle focus (same as Tab/Shift+Tab)", *HELP_BODY_STYLE)]), 
+        Line::from(""), // Spacer
+        Line::from(Span::styled("--- Preview Panel --- (When Focused)", *HELP_SECTION_STYLE)),
+        Line::from(""),
+        Line::from(vec![Span::styled("  [↑]/[↓]      ", *HELP_KEY_STYLE), Span::styled("Scroll content up/down one line", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [PgUp]/[PgDn]", *HELP_KEY_STYLE), Span::styled("Scroll content up/down one page", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Home]/[g]   ", *HELP_KEY_STYLE), Span::styled("Scroll to top", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [End]/[G]    ", *HELP_KEY_STYLE), Span::styled("Scroll to bottom", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [v]          ", *HELP_KEY_STYLE), Span::styled("Toggle view (Formatted/XML)", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [s]          ", *HELP_KEY_STYLE), Span::styled("Save current event details to XML file", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Esc]/[←]    ", *HELP_KEY_STYLE), Span::styled("Return focus to Event List panel", *HELP_BODY_STYLE)]), 
+        Line::from(""), // Spacer
+        Line::from(Span::styled("--- Search Input --- (When Active)", *HELP_SECTION_STYLE)),
+        Line::from(""),
+        Line::from(vec![Span::styled("  [Enter]      ", *HELP_KEY_STYLE), Span::styled("Perform search and close", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Esc]        ", *HELP_KEY_STYLE), Span::styled("Cancel search and close", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  Text Input   ", *HELP_KEY_STYLE), Span::styled("Standard text input keys (Backspace, Delete, Arrows, Home, End)", *HELP_BODY_STYLE)]), 
+        Line::from(""), // Spacer
+        Line::from(Span::styled("--- Filter Dialog --- (When Active)", *HELP_SECTION_STYLE)),
+        Line::from(""),
+        Line::from(vec![Span::styled("  [Tab]        ", *HELP_KEY_STYLE), Span::styled("Move focus to next field/button", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Shift+Tab]  ", *HELP_KEY_STYLE), Span::styled("Move focus to previous field/button", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Esc]        ", *HELP_KEY_STYLE), Span::styled("Cancel filtering and close dialog", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Enter]      ", *HELP_KEY_STYLE), Span::styled("Confirm input / Select Level / Activate Button", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  Text Input   ", *HELP_KEY_STYLE), Span::styled("Standard keys for EventID/Source fields", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [←]/[→]    ", *HELP_KEY_STYLE), Span::styled("Change Level / Move between Apply/Clear buttons", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [↑]/[↓]      ", *HELP_KEY_STYLE), Span::styled("Select previous/next Source from list (updates input)", *HELP_BODY_STYLE)]), 
+        Line::from(""), // Spacer
+        Line::from(Span::styled("--- Help Dialog --- (This Screen)", *HELP_SECTION_STYLE)),
+        Line::from(""),
+        Line::from(vec![Span::styled("  [Esc]        ", *HELP_KEY_STYLE), Span::styled("Dismiss this help dialog", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [↑]/[↓]      ", *HELP_KEY_STYLE), Span::styled("Scroll up/down one line", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [PgUp]/[PgDn]", *HELP_KEY_STYLE), Span::styled("Scroll up/down one page", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [Home]/[g]   ", *HELP_KEY_STYLE), Span::styled("Scroll to top", *HELP_BODY_STYLE)]), 
+        Line::from(vec![Span::styled("  [End]/[G]    ", *HELP_KEY_STYLE), Span::styled("Scroll to bottom", *HELP_BODY_STYLE)]), 
     ];
 }
 
@@ -489,15 +538,35 @@ fn render_search_bar(frame: &mut Frame, app_state: &mut AppState) {
         let x_pos = (frame.size().width.saturating_sub(search_width)) / 2;
         let search_area = Rect::new(x_pos, y_pos, search_width, search_height);
 
-        let search_block = Block::new()
-            .title(SEARCH_BAR_TITLE.clone())
-            .borders(Borders::ALL)
-            .border_style(*DIALOG_DEFAULT_STYLE)
-            .border_type(BORDER_TYPE_THEME)
-            .style(*DIALOG_DEFAULT_STYLE);
+        let dialog_style = *DIALOG_DEFAULT_STYLE;
+        let inverted_style = Style { fg: dialog_style.bg, bg: dialog_style.fg, ..dialog_style };
 
-        let search_text = format!(" {}_", app_state.search_term);
-        let search_paragraph = Paragraph::new(search_text)
+        // Create bottom title dynamically
+        let search_bottom_line = Line::from(vec![
+            Span::styled(" [Enter] ", inverted_style),
+            Span::styled("Search ", dialog_style),
+            Span::styled(" [Esc] ", inverted_style),
+            Span::styled("Cancel", dialog_style),
+        ]).alignment(Alignment::Center);
+        let search_bottom_title = Title::from(search_bottom_line)
+            .position(Position::Bottom)
+            .alignment(Alignment::Center);
+
+        let search_block = Block::new()
+            .title(SEARCH_BAR_TITLE.clone()) // Keep top title static
+            .title(search_bottom_title) // Add dynamic bottom title
+            .borders(Borders::ALL)
+            .border_style(dialog_style)
+            .border_type(BORDER_TYPE_THEME)
+            .style(dialog_style);
+
+        // Insert cursor character
+        let mut display_text = app_state.search_term.clone();
+        let cursor_pos = app_state.search_cursor;
+        let byte_idx = display_text.char_indices().nth(cursor_pos).map(|(idx, _)| idx).unwrap_or(display_text.len());
+        display_text.insert(byte_idx, '_'); // Insert cursor character
+        
+        let search_paragraph = Paragraph::new(display_text) // Use modified text with cursor
             .block(search_block)
             .style(*DIALOG_SELECTION_STYLE);
 
@@ -508,81 +577,134 @@ fn render_search_bar(frame: &mut Frame, app_state: &mut AppState) {
 
 fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
     if app_state.is_filter_dialog_visible {
+        const DIALOG_FIXED_HEIGHT: u16 = 15;
+        const DIALOG_WIDTH: u16 = 60;
         const FILTER_LIST_MAX_HEIGHT: u16 = 5;
-        let dialog_width = 60;
+
         let is_source_focused = app_state.filter_dialog_focus == FilterFieldFocus::Source;
-        let list_visible = is_source_focused && !app_state.filter_dialog_filtered_sources.is_empty();
-        let list_render_height = if list_visible {
-            FILTER_LIST_MAX_HEIGHT.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
+        let source_input_present = !app_state.filter_dialog_source_input.is_empty();
+        let list_area_should_show = is_source_focused && source_input_present;
+        let sources_found = !app_state.filter_dialog_filtered_sources.is_empty();
+
+        // Calculate list height only when it should be shown
+        let list_render_height = if list_area_should_show {
+            if sources_found {
+                FILTER_LIST_MAX_HEIGHT.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
+            } else {
+                1 // Height for "No sources found"
+            }
         } else {
             0
         };
 
-        const SOURCE_LABEL_HEIGHT: u16 = 1;
-        const SOURCE_INPUT_HEIGHT: u16 = 1;
-        const EVENT_ID_LABEL_HEIGHT: u16 = 1;
-        const EVENT_ID_INPUT_HEIGHT: u16 = 1;
-        const LEVEL_SELECT_HEIGHT: u16 = 1;
-        const BUTTON_SPACER_HEIGHT: u16 = 1;
-        const BUTTON_ROW_HEIGHT: u16 = 1;
-        const BORDERS_HEIGHT: u16 = 2;
-        const INNER_MARGIN_HEIGHT: u16 = 2;
-
-        let total_inner_content_height = SOURCE_LABEL_HEIGHT
-            + SOURCE_INPUT_HEIGHT
-            + FILTER_LIST_MAX_HEIGHT
-            + EVENT_ID_LABEL_HEIGHT
-            + EVENT_ID_INPUT_HEIGHT
-            + LEVEL_SELECT_HEIGHT
-            + BUTTON_SPACER_HEIGHT
-            + BUTTON_ROW_HEIGHT;
-
-        let dialog_height = total_inner_content_height + INNER_MARGIN_HEIGHT + BORDERS_HEIGHT;
-        let dialog_area = helpers::centered_fixed_rect(dialog_width, dialog_height.min(frame.size().height), frame.size());
+        // Use fixed height for the dialog
+        let dialog_area = helpers::centered_fixed_rect(DIALOG_WIDTH, DIALOG_FIXED_HEIGHT, frame.size());
 
         frame.render_widget(Clear, dialog_area);
+
+        let dialog_style = *DIALOG_DEFAULT_STYLE;
+        let inverted_style = Style { fg: dialog_style.bg, bg: dialog_style.fg, ..dialog_style };
+
+        // Create bottom title dynamically
+        let filter_cancel_line = Line::from(vec![
+            Span::styled(" [Esc] ", inverted_style), // Use inverted style for key
+            Span::styled("Cancel", dialog_style),    // Use normal style for text
+        ]).alignment(Alignment::Center);
+        let filter_cancel_title = Title::from(filter_cancel_line)
+            .position(Position::Bottom)
+            .alignment(Alignment::Center);
+
         let dialog_block = create_dialog_block(
             "Filter Events",
-            FILTER_CANCEL_TITLE.clone(),
-            *DIALOG_DEFAULT_STYLE,
+            filter_cancel_title, // Use dynamic title
+            dialog_style,
         );
         let inner_area = dialog_block.inner(dialog_area);
         frame.render_widget(dialog_block, dialog_area);
 
+        // Define heights for layout (can still be const)
+        const EVENT_ID_LABEL_HEIGHT: u16 = 1;
+        const EVENT_ID_INPUT_HEIGHT: u16 = 1;
+        const LEVEL_SELECT_HEIGHT: u16 = 1;
+        const SOURCE_LABEL_HEIGHT: u16 = 1;
+        const SOURCE_INPUT_HEIGHT: u16 = 1;
+        const BUTTON_ROW_HEIGHT: u16 = 1;
+        // No need for spacer height const anymore
+
         let constraints = vec![
-            Constraint::Length(SOURCE_LABEL_HEIGHT),
-            Constraint::Length(SOURCE_INPUT_HEIGHT),
-            Constraint::Length(list_render_height),
             Constraint::Length(EVENT_ID_LABEL_HEIGHT),
             Constraint::Length(EVENT_ID_INPUT_HEIGHT),
             Constraint::Length(LEVEL_SELECT_HEIGHT),
-            Constraint::Length(BUTTON_SPACER_HEIGHT),
-            Constraint::Min(0),
+            Constraint::Length(SOURCE_LABEL_HEIGHT),
+            Constraint::Length(SOURCE_INPUT_HEIGHT),
+            Constraint::Length(list_render_height), // List height is still dynamic *within* constraints
+            Constraint::Min(0),                      // Spacer takes remaining space
             Constraint::Length(BUTTON_ROW_HEIGHT),
         ];
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .margin(1)
+            .margin(1) // Keep margin for content padding
             .constraints(constraints)
             .split(inner_area);
 
-        let mut chunk_index = 0;
+        // Check if enough chunks were generated (minimum expected is 8)
+        if chunks.len() < 8 {
+             // Handle error: maybe log or display a message?
+             // For now, just return to avoid panic on indexing
+             return;
+        }
+
         let base_text_style = *DIALOG_DEFAULT_STYLE;
 
-        if chunk_index < chunks.len() { frame.render_widget(Paragraph::new("Source:").style(base_text_style), chunks[chunk_index]); chunk_index += 1; }
+        // --- Render Components using correct chunks ---
+        // Event ID
+        frame.render_widget(Paragraph::new("Event ID:").style(base_text_style), chunks[0]);
+        let is_eventid_focused = app_state.filter_dialog_focus == FilterFieldFocus::EventId;
+        let event_id_input_style = if is_eventid_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
+        let event_id_text = if is_eventid_focused { 
+            // Insert cursor for focused Event ID input
+            let mut display_text = app_state.filter_dialog_event_id.clone();
+            let cursor_pos = app_state.filter_event_id_cursor;
+            let byte_idx = display_text.char_indices().nth(cursor_pos).map(|(idx, _)| idx).unwrap_or(display_text.len());
+            display_text.insert(byte_idx, '_');
+            display_text
+        } else {
+            // Add space padding if not focused
+            format!(" {}", app_state.filter_dialog_event_id)
+        };
+        frame.render_widget(Paragraph::new(event_id_text).style(event_id_input_style), chunks[1]);
+
+        // Level
+        let level_text = Line::from(vec![
+            Span::raw("Level: ").style(base_text_style),
+            Span::styled("< ", *SELECTION_STYLE),
+            Span::styled(app_state.filter_dialog_level.display_name(), *DIALOG_SELECTION_STYLE),
+            Span::styled(" >", *SELECTION_STYLE),
+        ]);
+        frame.render_widget(Paragraph::new(level_text), chunks[2]);
+
+        // Source Input
+        frame.render_widget(Paragraph::new("Source:").style(base_text_style), chunks[3]);
         let source_style = if is_source_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
         let source_input_display = if is_source_focused {
-            format!("{}_", app_state.filter_dialog_source_input)
+             // Insert cursor for focused Source input
+            let mut display_text = app_state.filter_dialog_source_input.clone();
+            let cursor_pos = app_state.filter_source_cursor;
+            let byte_idx = display_text.char_indices().nth(cursor_pos).map(|(idx, _)| idx).unwrap_or(display_text.len());
+            display_text.insert(byte_idx, '_');
+            display_text
         } else if app_state.filter_dialog_source_input.is_empty() {
-            "[Any Source]".to_string()
+            "[Any Source]".to_string() // Placeholder when not focused and empty
         } else {
+             // Add space padding if not focused and not empty
             format!(" {}", app_state.filter_dialog_source_input)
         };
-        if chunk_index < chunks.len() { frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[chunk_index]); chunk_index += 1; }
+        frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[4]);
 
-        if chunk_index < chunks.len() {
-            if list_visible {
+        // Source List / Message Area
+        if list_area_should_show {
+            if sources_found {
                 let list_items: Vec<ListItem> = app_state.filter_dialog_filtered_sources.iter()
                     .map(|(_, name)| ListItem::new(name.clone()).style(base_text_style))
                     .collect();
@@ -592,40 +714,25 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
                     .highlight_symbol(">");
                 let mut list_state = ListState::default();
                 list_state.select(app_state.filter_dialog_filtered_source_selection);
-                frame.render_stateful_widget(list, chunks[chunk_index], &mut list_state);
+                frame.render_stateful_widget(list, chunks[5], &mut list_state);
+            } else {
+                let no_sources_msg = Paragraph::new("No matching sources found")
+                    .style(base_text_style.add_modifier(Modifier::ITALIC));
+                frame.render_widget(no_sources_msg, chunks[5]);
             }
-            chunk_index += 1;
         }
+        // chunk[6] is the spacer handled by Constraint::Min(0)
 
-        if chunk_index < chunks.len() { frame.render_widget(Paragraph::new("Event ID:").style(base_text_style), chunks[chunk_index]); chunk_index += 1; }
-        let is_eventid_focused = app_state.filter_dialog_focus == FilterFieldFocus::EventId;
-        let event_id_input_style = if is_eventid_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
-        let event_id_text = if is_eventid_focused {
-            format!("{}_", app_state.filter_dialog_event_id)
-        } else {
-            format!(" {}", app_state.filter_dialog_event_id)
-        };
-        if chunk_index < chunks.len() { frame.render_widget(Paragraph::new(event_id_text).style(event_id_input_style), chunks[chunk_index]); chunk_index += 1; }
-        let level_text = Line::from(vec![
-            Span::raw("Level: ").style(base_text_style),
-            Span::styled("< ", *SELECTION_STYLE),
-            Span::styled(app_state.filter_dialog_level.display_name(), *DIALOG_SELECTION_STYLE),
-            Span::styled(" >", *SELECTION_STYLE),
-        ]);
-        if chunk_index < chunks.len() { frame.render_widget(Paragraph::new(level_text), chunks[chunk_index]); chunk_index += 1; }
-
-        if chunk_index < chunks.len() { chunk_index += 1; }
-
-        if chunk_index < chunks.len() {
-            let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply { *SELECTION_STYLE } else { base_text_style };
-            let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear { *SELECTION_STYLE } else { base_text_style };
-            let button_line = Line::from(vec![
-                Span::styled(" [ Apply ] ", apply_style),
-                Span::raw(" ").style(base_text_style),
-                Span::styled(" [ Clear ] ", clear_style),
-            ]).alignment(Alignment::Center);
-            frame.render_widget(Paragraph::new(button_line).style(base_text_style), chunks[chunk_index]);
-        }
+        // Buttons
+        let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply { *SELECTION_STYLE } else { base_text_style };
+        let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear { *SELECTION_STYLE } else { base_text_style };
+        let button_line = Line::from(vec![
+            Span::styled(" [ Apply ] ", apply_style),
+            Span::raw(" ").style(base_text_style),
+            Span::styled(" [ Clear ] ", clear_style),
+        ]).alignment(Alignment::Center);
+        // Buttons are now in the last chunk, index 7
+        frame.render_widget(Paragraph::new(button_line).style(base_text_style), chunks[7]);
     }
 }
 
@@ -637,11 +744,25 @@ fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
 
         frame.render_widget(Clear, help_area);
 
+        let dialog_style = *DIALOG_DEFAULT_STYLE;
+        let inverted_style = Style { fg: dialog_style.bg, bg: dialog_style.fg, ..dialog_style };
+
+        // Create bottom title dynamically
+        let help_dismiss_line = Line::from(vec![
+            Span::styled(" [Esc] ", inverted_style),
+            Span::styled("Dismiss ", dialog_style),
+            Span::styled(" [↑↓ PgUpDn Hm/g End/G] ", inverted_style), // Updated scroll keys
+            Span::styled("Scroll", dialog_style),
+        ]).alignment(Alignment::Center);
+        let help_dismiss_title = Title::from(help_dismiss_line)
+            .position(Position::Bottom)
+            .alignment(Alignment::Center);
+
         let help_dialog_title_text = format!(" Help - Event Commander (v{}) ", VERSION);
         let help_block = create_dialog_block(
             &help_dialog_title_text,
-            HELP_DISMISS_TITLE.clone(),
-            *DIALOG_DEFAULT_STYLE,
+            help_dismiss_title, // Use dynamic title
+            dialog_style,
         );
         let content_area = help_block.inner(help_area);
         frame.render_widget(help_block, help_area);
@@ -656,11 +777,12 @@ fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
 
         let help_paragraph = Paragraph::new(help_text)
             .wrap(Wrap { trim: false })
-            .style(*DEFAULT_STYLE)
+            .style(*HELP_BODY_STYLE) // Use dialog-derived style
             .scroll((current_scroll as u16, 0));
 
         frame.render_widget(help_paragraph, content_area);
 
+        // Use dialog title style for the scroll indicator
         render_scroll_indicator(frame, content_area, current_scroll + 1, total_lines, *TITLE_STYLE);
     }
 }

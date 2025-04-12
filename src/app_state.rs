@@ -77,6 +77,9 @@ impl AppState {
             filter_dialog_source_input: String::new(),
             filter_dialog_filtered_sources: Vec::new(),
             filter_dialog_filtered_source_selection: None,
+            filter_event_id_cursor: 0,
+            filter_source_cursor: 0,
+            search_cursor: 0,
             help_dialog_visible: false,
             help_scroll_position: 0,
         };

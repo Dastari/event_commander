@@ -126,6 +126,10 @@ pub struct AppState {
     pub filter_dialog_source_input: String,
     pub filter_dialog_filtered_sources: Vec<(usize, String)>,
     pub filter_dialog_filtered_source_selection: Option<usize>,
+    // Cursor positions for input fields
+    pub filter_event_id_cursor: usize,
+    pub filter_source_cursor: usize,
+    pub search_cursor: usize,
     pub help_dialog_visible: bool,
     pub help_scroll_position: usize,
 }
@@ -187,21 +191,24 @@ impl EventLevelFilter {
 }
 
 impl FilterFieldFocus {
+    /// Cycles to the next field in the filter dialog.
     pub fn next(&self) -> Self {
         match self {
-            Self::Source => Self::EventId,
             Self::EventId => Self::Level,
-            Self::Level => Self::Apply,
+            Self::Level => Self::Source,
+            Self::Source => Self::Apply,
             Self::Apply => Self::Clear,
-            Self::Clear => Self::Source, // Wrap around
+            Self::Clear => Self::EventId, // Wrap around
         }
     }
+
+    /// Cycles to the previous field in the filter dialog.
     pub fn previous(&self) -> Self {
         match self {
-            Self::Source => Self::Clear, // Wrap around
-            Self::EventId => Self::Source,
+            Self::EventId => Self::Clear, // Wrap around
             Self::Level => Self::EventId,
-            Self::Apply => Self::Level,
+            Self::Source => Self::Level,
+            Self::Apply => Self::Source,
             Self::Clear => Self::Apply,
         }
     }
