@@ -377,10 +377,6 @@ pub fn format_event_message(
     event_handle: EVT_HANDLE,
 ) -> Option<String> {
     let provider_key = provider_name_original.to_string();
-    // app_state.log(&format!(
-    //     "[Format Attempt] Provider: '{}', EventHandle: {:?}",
-    //     provider_name_original, event_handle
-    // )); 
     let mut publisher_metadata: Option<EVT_HANDLE> = None;
     let evt_variants_slice: Option<&[EVT_VARIANT]> = None; // Always pass None now
 
@@ -399,18 +395,9 @@ pub fn format_event_message(
                     app_state.publisher_metadata_cache.insert(provider_key.clone(), handle);
                 }
                 Ok(invalid_handle) => {
-                    // app_state.log(&format!(
-                    //     "[Format Warning] EvtOpenPublisherMetadata returned invalid handle for '{}'",
-                    //     provider_name_original
-                    // ));
                     if !invalid_handle.is_invalid() { let _ = EvtClose(invalid_handle); }
                 }
-                Err(e) => {
-                    // app_state.log(&format!(
-                    //     "[Format Error] EvtOpenPublisherMetadata failed for '{}': {}. GetLastError: {:?}",
-                    //     provider_name_original, e, GetLastError()
-                    // ));
-                }
+                Err(e) => {}
             }
         }
 
@@ -420,12 +407,10 @@ pub fn format_event_message(
             let mut buffer_size_needed: u32 = 0;
 
              // --- 1. Try EvtFormatMessageXml ---
-             // app_state.log("[Format Debug] Trying EvtFormatMessageXml...");
              let flags_xml = EvtFormatMessageXml.0;
              let format_result_xml_size = EvtFormatMessage(
                  handle_to_use, event_handle, 0, evt_variants_slice, flags_xml, None, &mut buffer_size_needed
              );
-             // app_state.log(&format!("[Format Debug] EvtFormatMessageXml (1st call) Result: {:?}, BufferNeeded: {}", format_result_xml_size, buffer_size_needed));
 
              match format_result_xml_size {
                   Err(ref e) if e.code() == ERROR_INSUFFICIENT_BUFFER.into() => {
@@ -435,57 +420,27 @@ pub fn format_event_message(
                              handle_to_use, event_handle, 0, evt_variants_slice, flags_xml, 
                              Some(buffer.as_mut_slice()), &mut buffer_size_needed
                          );
-                         // app_state.log(&format!("[Format Debug] EvtFormatMessageXml (2nd call) Result: {:?}", format_result_xml_fill));
                          if format_result_xml_fill.is_ok() {
                              let null_pos = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
                              let msg = String::from_utf16_lossy(&buffer[..null_pos]);
                              let trimmed_msg = msg.trim();
                              if !trimmed_msg.is_empty() && !trimmed_msg.starts_with('<') {
                                  final_formatted_message = Some(trimmed_msg.to_string());
-                                 // app_state.log("[Format Debug] EvtFormatMessageXml succeeded with usable text.");
-                             } else {
-                                 // app_state.log("[Format Debug] EvtFormatMessageXml returned XML/empty, trying Event flag...");
-                             }
-                         } else {
-                             // app_state.log(&format!(
-                             //     "[Format Error] EvtFormatMessage (Xml, 2nd call) failed for '{}'. GetLastError: {:?}", 
-                             //     provider_name_original, GetLastError()
-                             // ));
-                         }
-                     } else {
-                          // app_state.log(&format!(
-                          //    "[Format Warning] EvtFormatMessage (Xml, 1st call - InsufficientBuffer) needed buffer size 0 for '{}'.",
-                          //    provider_name_original
-                          // ));
-                     }
+                             } else {}
+                         } else {}
+                     } else {}
                  }
-                 Err(e) => {
-                      // app_state.log(&format!("[Format Debug] EvtFormatMessageXml (1st call) Error: {:?}, Code: {}", e, e.code()));
-                      // Only log unexpected errors
-                      if e.code() != ERROR_EVT_MESSAGE_NOT_FOUND.into() && e.code() != ERROR_INVALID_PARAMETER.into() {
-                         app_state.log(&format!(
-                            "[Format Warning] EvtFormatMessage (Xml, 1st call) failed unexpectedly for '{}': {}. GetLastError: {:?}",
-                            provider_name_original, e, GetLastError()
-                        ));
-                     }
-                 }
-                 Ok(_) => {
-                     // app_state.log(&format!(
-                     //     "[Format Warning] EvtFormatMessage (Xml, 1st call) succeeded unexpectedly for '{}'. Buffer size needed: {}. Assuming no message from Xml.",
-                     //     provider_name_original, buffer_size_needed
-                     // ));
-                 }
+                 Err(_e) => {}
+                 Ok(_) => {}
              }
 
             // --- 2. Try EvtFormatMessageEvent (if Xml didn't produce usable text) ---
             if final_formatted_message.is_none() {
-                // app_state.log("[Format Debug] Trying EvtFormatMessageEvent..."); 
                 buffer_size_needed = 0; 
                 let flags_event = windows::Win32::System::EventLog::EvtFormatMessageEvent.0;
                 let format_result_event_size = EvtFormatMessage(
                     handle_to_use, event_handle, 0, evt_variants_slice, flags_event, None, &mut buffer_size_needed
                 );
-                // app_state.log(&format!("[Format Debug] EvtFormatMessageEvent (1st call) Result: {:?}, BufferNeeded: {}", format_result_event_size, buffer_size_needed));
 
                 match format_result_event_size {
                     Err(ref e) if e.code() == ERROR_INSUFFICIENT_BUFFER.into() => {
@@ -495,57 +450,23 @@ pub fn format_event_message(
                                 handle_to_use, event_handle, 0, evt_variants_slice, flags_event, 
                                 Some(buffer.as_mut_slice()), &mut buffer_size_needed
                             );
-                            // app_state.log(&format!("[Format Debug] EvtFormatMessageEvent (2nd call) Result: {:?}", format_result_event_fill));
                             if format_result_event_fill.is_ok() {
                                 let null_pos = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
                                 let msg = String::from_utf16_lossy(&buffer[..null_pos]);
                                 let trimmed_msg = msg.trim(); 
                                 if !trimmed_msg.is_empty() {
                                     final_formatted_message = Some(trimmed_msg.to_string()); 
-                                    // app_state.log("[Format Debug] EvtFormatMessageEvent succeeded with usable text.");
-                                } else {
-                                    // app_state.log("[Format Debug] EvtFormatMessageEvent returned empty message.");
-                                }
-                            } else {
-                                // app_state.log(&format!(
-                                //     "[Format Error] EvtFormatMessage (Event, 2nd call) failed for '{}'. GetLastError: {:?}", 
-                                //     provider_name_original, GetLastError()
-                                // ));
-                            }
-                        } else {
-                            // app_state.log(&format!(
-                            //     "[Format Warning] EvtFormatMessage (Event, 1st call - InsufficientBuffer) needed buffer size 0 for '{}'.",
-                            //     provider_name_original
-                            // ));
-                        }
+                                } else {}
+                            } else {}
+                        } else {}
                     }
-                    Err(e) => {
-                        // app_state.log(&format!("[Format Debug] EvtFormatMessageEvent (1st call) Error: {:?}, Code: {}", e, e.code()));
-                         // Only log unexpected errors
-                        if e.code() != ERROR_EVT_MESSAGE_NOT_FOUND.into() && e.code() != ERROR_INVALID_PARAMETER.into() {
-                            app_state.log(&format!(
-                                "[Format Warning] EvtFormatMessage (Event, 1st call) failed unexpectedly for '{}': {}. GetLastError: {:?}",
-                                provider_name_original, e, GetLastError()
-                            ));
-                        }
-                    }
-                    Ok(_) => {
-                        // app_state.log(&format!(
-                        //     "[Format Warning] EvtFormatMessage (Event, 1st call) succeeded unexpectedly for '{}'. Buffer size needed: {}. Assuming no message from Event flag.",
-                        //     provider_name_original, buffer_size_needed
-                        // ));
-                    }
+                    Err(_) => {}
+                    Ok(_) => {}
                 }
             }
             
-            // app_state.log(&format!("[Format Result] Returning: {:?}", final_formatted_message));
             final_formatted_message
         } else {
-            // Keep this log for cases where the publisher handle couldn't be obtained
-            app_state.log(&format!(
-                "[Format Error] Cannot format message for '{}', publisher metadata handle is missing.",
-                provider_name_original
-            ));
             None
         }
     }

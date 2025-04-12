@@ -33,7 +33,7 @@ pub struct StatusDialog {
 /// Represents the view mode for the preview panel when focused.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum PreviewViewMode {
-    #[default] // Default to formatted view
+    #[default]
     Formatted,
     RawXml,
 }
@@ -156,13 +156,13 @@ impl EventLevelFilter {
             Self::All => Self::Information,
             Self::Information => Self::Warning,
             Self::Warning => Self::Error,
-            Self::Error => Self::All, // Wrap around
+            Self::Error => Self::All,
         }
     }
     /// Cycles to the previous event level filter.
     pub fn previous(&self) -> Self {
         match self {
-            Self::All => Self::Error, // Wrap around
+            Self::All => Self::Error,
             Self::Information => Self::All,
             Self::Warning => Self::Information,
             Self::Error => Self::Warning,
@@ -187,14 +187,14 @@ impl FilterFieldFocus {
             Self::Level => Self::Source,
             Self::Source => Self::Apply,
             Self::Apply => Self::Clear,
-            Self::Clear => Self::EventId, // Wrap around
+            Self::Clear => Self::EventId,
         }
     }
 
     /// Cycles to the previous field in the filter dialog.
     pub fn previous(&self) -> Self {
         match self {
-            Self::EventId => Self::Clear, // Wrap around
+            Self::EventId => Self::Clear,
             Self::Level => Self::EventId,
             Self::Source => Self::Level,
             Self::Apply => Self::Source,

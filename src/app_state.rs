@@ -18,7 +18,6 @@ impl AppState {
     pub fn new() -> Self {
         let initial_log_name = LOG_NAMES[0].to_string();
 
-        // --- Initialize Log File ---
         let log_file_path = Path::new("event_commander.log");
         let log_file_result = OpenOptions::new()
             .create(true)
@@ -26,9 +25,8 @@ impl AppState {
             .open(log_file_path);
 
         let log_file = match log_file_result {
-            Ok(file) => Some(BufWriter::new(file)), // Use BufWriter for efficiency
+            Ok(file) => Some(BufWriter::new(file)),
             Err(e) => {
-                // Log error to stderr *only* if file opening fails
                 eprintln!(
                     "Failed to open or create log file '{}': {}. Logging disabled.",
                     log_file_path.display(),
@@ -50,11 +48,11 @@ impl AppState {
             preview_formatted_content: None,
             preview_raw_xml: None,
             preview_view_mode: PreviewViewMode::default(),
-            log_file, // Use the initialized log_file
+            log_file,
             #[cfg(target_os = "windows")]
             query_handle: None,
             #[cfg(target_os = "windows")]
-            publisher_metadata_cache: HashMap::new(), // Initialize cache
+            publisher_metadata_cache: HashMap::new(),
             is_loading: false,
             no_more_events: false,
             sort_descending: true,
@@ -85,16 +83,10 @@ impl AppState {
     pub fn log(&mut self, message: &str) {
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
         let log_entry = format!("[{}]: {}\n", timestamp, message);
-        // Remove direct console print
-        // eprint!("{}", log_entry);
-        // Write to log file if available
         if let Some(ref mut writer) = self.log_file {
             if let Err(e) = writer.write_all(log_entry.as_bytes()) {
-                 // Log failure to write to stderr as a fallback
                  eprintln!("Error writing to log file: {}", e);
              }
-             // Flush periodically or on drop? BufWriter handles buffering.
-             // Let's rely on Drop for final flush.
         }
     }
 
@@ -122,52 +114,42 @@ impl AppState {
     pub fn update_preview_for_selection(&mut self) {
         if let Some(selected_idx) = self.table_state.selected() {
             if let Some(event) = self.events.get(selected_idx) {
-                // Construct the header part
                 let header = format!(
-                    "Level:       {}\nDateTime:    {}\nSource:      {}\nEvent ID:    {}\nProvider:    {}\n",
+                    "Level:       {}\nDateTime:    {}\nSource:      {}\nEvent ID:    {}\n",
                     event.level,
                     event.datetime,
-                    event.source, // Use potentially shortened source for display
-                    event.id,
-                    event.provider_name_original // Display full provider name
+                    event.source,
+                    event.id
                 );
 
-                // Determine the primary message content: Prefer formatted, fallback to parsed
                 let message_content = event.formatted_message
                     .as_ref()
-                    .filter(|fm| !fm.is_empty()) // Use formatted if it exists and isn't empty
+                    .filter(|fm| !fm.is_empty())
                     .map(|fm| fm.as_str())
                     .unwrap_or_else(|| {
-                        // Fallback: use parsed message if not empty/placeholder
-                        // Note: event.message now contains the joined event_data_values from the parser
                         if !event.message.is_empty() && !event.message.starts_with("<No") {
                             &event.message
                         } else {
-                            // If both formatted and parsed are unavailable/empty
-                            "<No message content found>" // Use a more accurate placeholder
+                            "<No message content found>"
                         }
                     });
 
-                // Build the final content string for the "Formatted" view
-                let mut combined_content = header.clone(); // Start with header
-                combined_content.push_str("\n--- Message ---\n"); // Use a consistent header
+                let mut combined_content = header.clone();
+                combined_content.push_str("\n--- Message ---\n");
                 combined_content.push_str(message_content);
                 combined_content.push('\n');
 
-                // Update AppState fields
                 self.preview_event_id = Some(format!("{}_{}", event.source, event.id));
-                self.preview_formatted_content = Some(combined_content.trim_end().to_string()); // Assign combined content
+                self.preview_formatted_content = Some(combined_content.trim_end().to_string());
                 self.preview_raw_xml = Some(event.raw_data.clone());
                 self.preview_scroll = 0;
             } else {
-                // Index out of bounds
                 self.preview_event_id = None;
                 self.preview_formatted_content = Some("<Error: Selected index out of bounds>".to_string());
                 self.preview_raw_xml = None;
                 self.preview_scroll = 0;
             }
         } else {
-            // No selection
             self.preview_event_id = None;
             self.preview_formatted_content = Some("<No event selected>".to_string());
             self.preview_raw_xml = None;
@@ -184,10 +166,9 @@ impl AppState {
          if !self.events.is_empty() {
             self.table_state.select(Some(i));
             self.update_preview_for_selection();
-            // Optionally load more events if scrolling near the end
             if i >= self.events.len().saturating_sub(20) {
                  #[cfg(target_os = "windows")]
-                 self.start_or_continue_log_load(false); // Assuming this method exists
+                 self.start_or_continue_log_load(false);
             }
         }
     }
@@ -338,9 +319,9 @@ impl AppState {
             self.events.clear();
             self.table_state.select(Some(0));
             self.no_more_events = false;
-            self.active_filter = None; // Also clear filter when changing log
+            self.active_filter = None;
             #[cfg(target_os = "windows")]
-            self.start_or_continue_log_load(true); // Start fresh load
+            self.start_or_continue_log_load(true);
         }
     }
     
@@ -377,25 +358,21 @@ impl AppState {
             level: new_level,
             ..current_filter
         });
-        // Reload data needed after filter change
          #[cfg(target_os = "windows")]
          self.start_or_continue_log_load(true);
     }
 }
 
-// Add the Drop implementation
 impl Drop for AppState {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
         {
-            // Close the main query handle
-            if let Some(handle) = self.query_handle.take() { // Use take to prevent double close
+            if let Some(handle) = self.query_handle.take() {
                 unsafe {
                     let _ = EvtClose(handle);
                 }
             }
-            // Close all cached publisher metadata handles
-            for (_provider, handle) in self.publisher_metadata_cache.drain() { // Use drain to consume cache
+            for (_provider, handle) in self.publisher_metadata_cache.drain() {
                 unsafe {
                     let _ = EvtClose(handle);
                 }

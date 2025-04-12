@@ -356,13 +356,12 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { THEME_FOCUSED_BORDER } else { THEME_BORDER }));
 
     let mut title_text: String;
-    let content_to_display: String; // No longer Option, calculated directly
+    let content_to_display: String;
     let wrap_behavior: Wrap;
 
     match app_state.preview_view_mode {
         PreviewViewMode::RawXml => {
             title_text = " Event Details (Raw XML) ".to_string();
-            // Directly assign to content_to_display
             content_to_display = if let Some(ref raw_xml) = app_state.preview_raw_xml {
                 match helpers::pretty_print_xml(raw_xml) {
                     Ok(pretty_xml) => {
@@ -380,14 +379,13 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
             } else {
                 "<No event selected or raw XML unavailable>".to_string()
             };
-            wrap_behavior = Wrap { trim: false }; // No trim for XML
+            wrap_behavior = Wrap { trim: false };
         }
         PreviewViewMode::Formatted => {
              title_text = " Event Details (Formatted) ".to_string();
-             // Directly assign to content_to_display
              content_to_display = app_state.preview_formatted_content.clone()
                 .unwrap_or_else(|| "<No content available>".to_string());
-             wrap_behavior = Wrap { trim: false }; // Use trim false for formatted view as well
+             wrap_behavior = Wrap { trim: false };
         }
     }
 
@@ -399,29 +397,25 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
         .style(*DEFAULT_STYLE);
 
     let inner_area = block.inner(area);
-    frame.render_widget(block, area); // Render block first
+    frame.render_widget(block, area);
 
-    // Use content_to_display calculated in the match block
-    let content_string = content_to_display; // Assign directly
+    let content_string = content_to_display;
 
-    // Calculate the effective number of lines considering wrapping
     let effective_total_lines = if inner_area.width > 0 {
-        let available_width = inner_area.width as usize; // Use width from inner_area
+        let available_width = inner_area.width as usize;
         let mut total_wrapped_lines = 0;
-        for line in content_string.lines() { // Use content_string here
+        for line in content_string.lines() {
             let char_count = line.chars().count();
-            // Estimate lines needed for this line, apply multiplier
             let lines_needed = (((char_count.max(1)) as f32 / available_width as f32) * 1.2).ceil() as usize;
             total_wrapped_lines += lines_needed;
         }
-        total_wrapped_lines.max(1) // Ensure at least 1 line if content exists
+        total_wrapped_lines.max(1)
     } else {
-        content_string.lines().count().max(1) // Fallback if width is 0
+        content_string.lines().count().max(1)
     };
 
     let available_height = inner_area.height as usize;
 
-    // Clamp the scroll based on the estimated wrapped height
     if effective_total_lines > 0 && available_height > 0 {
         let max_scroll = effective_total_lines.saturating_sub(available_height);
         app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
@@ -431,22 +425,20 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
 
     let scroll_offset = (app_state.preview_scroll as u16, 0);
 
-    // Create the final paragraph with the correct scroll offset
     let paragraph_to_render = Paragraph::new(content_string)
         .wrap(wrap_behavior)
         .scroll(scroll_offset)
         .style(*DEFAULT_STYLE);
 
-    frame.render_widget(paragraph_to_render, inner_area); // Render content inside block
+    frame.render_widget(paragraph_to_render, inner_area);
 
-    // Render scroll indicator if needed
     if effective_total_lines > available_height {
         render_scroll_indicator(
             frame,
             inner_area,
             app_state.preview_scroll + 1,
             effective_total_lines,
-            border_style, // Use border style for indicator
+            border_style,
         );
     }
 }
@@ -541,7 +533,6 @@ fn render_search_bar(frame: &mut Frame, app_state: &mut AppState) {
         let dialog_style = *DIALOG_DEFAULT_STYLE;
         let inverted_style = Style { fg: dialog_style.bg, bg: dialog_style.fg, ..dialog_style };
 
-        // Create bottom title dynamically
         let search_bottom_line = Line::from(vec![
             Span::styled(" [Enter] ", inverted_style),
             Span::styled("Search ", dialog_style),
@@ -553,20 +544,19 @@ fn render_search_bar(frame: &mut Frame, app_state: &mut AppState) {
             .alignment(Alignment::Center);
 
         let search_block = Block::new()
-            .title(SEARCH_BAR_TITLE.clone()) // Keep top title static
-            .title(search_bottom_title) // Add dynamic bottom title
+            .title(SEARCH_BAR_TITLE.clone())
+            .title(search_bottom_title)
             .borders(Borders::ALL)
             .border_style(dialog_style)
             .border_type(BORDER_TYPE_THEME)
             .style(dialog_style);
 
-        // Insert cursor character
         let mut display_text = app_state.search_term.clone();
         let cursor_pos = app_state.search_cursor;
         let byte_idx = display_text.char_indices().nth(cursor_pos).map(|(idx, _)| idx).unwrap_or(display_text.len());
-        display_text.insert(byte_idx, '_'); // Insert cursor character
+        display_text.insert(byte_idx, '_');
         
-        let search_paragraph = Paragraph::new(display_text) // Use modified text with cursor
+        let search_paragraph = Paragraph::new(display_text)
             .block(search_block)
             .style(*DIALOG_SELECTION_STYLE);
 
@@ -586,18 +576,16 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         let list_area_should_show = is_source_focused && source_input_present;
         let sources_found = !app_state.filter_dialog_filtered_sources.is_empty();
 
-        // Calculate list height only when it should be shown
         let list_render_height = if list_area_should_show {
             if sources_found {
                 FILTER_LIST_MAX_HEIGHT.min(app_state.filter_dialog_filtered_sources.len() as u16).max(1)
             } else {
-                1 // Height for "No sources found"
+                1
             }
         } else {
             0
         };
 
-        // Use fixed height for the dialog
         let dialog_area = helpers::centered_fixed_rect(DIALOG_WIDTH, DIALOG_FIXED_HEIGHT, frame.size());
 
         frame.render_widget(Clear, dialog_area);
@@ -605,10 +593,9 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
         let dialog_style = *DIALOG_DEFAULT_STYLE;
         let inverted_style = Style { fg: dialog_style.bg, bg: dialog_style.fg, ..dialog_style };
 
-        // Create bottom title dynamically
         let filter_cancel_line = Line::from(vec![
-            Span::styled(" [Esc] ", inverted_style), // Use inverted style for key
-            Span::styled("Cancel", dialog_style),    // Use normal style for text
+            Span::styled(" [Esc] ", inverted_style),
+            Span::styled("Cancel", dialog_style),
         ]).alignment(Alignment::Center);
         let filter_cancel_title = Title::from(filter_cancel_line)
             .position(Position::Bottom)
@@ -616,20 +603,18 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
 
         let dialog_block = create_dialog_block(
             "Filter Events",
-            filter_cancel_title, // Use dynamic title
+            filter_cancel_title,
             dialog_style,
         );
         let inner_area = dialog_block.inner(dialog_area);
         frame.render_widget(dialog_block, dialog_area);
 
-        // Define heights for layout (can still be const)
         const EVENT_ID_LABEL_HEIGHT: u16 = 1;
         const EVENT_ID_INPUT_HEIGHT: u16 = 1;
         const LEVEL_SELECT_HEIGHT: u16 = 1;
         const SOURCE_LABEL_HEIGHT: u16 = 1;
         const SOURCE_INPUT_HEIGHT: u16 = 1;
         const BUTTON_ROW_HEIGHT: u16 = 1;
-        // No need for spacer height const anymore
 
         let constraints = vec![
             Constraint::Length(EVENT_ID_LABEL_HEIGHT),
@@ -637,75 +622,63 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
             Constraint::Length(LEVEL_SELECT_HEIGHT),
             Constraint::Length(SOURCE_LABEL_HEIGHT),
             Constraint::Length(SOURCE_INPUT_HEIGHT),
-            Constraint::Length(list_render_height), // List height is still dynamic *within* constraints
-            Constraint::Min(0),                      // Spacer takes remaining space
+            Constraint::Length(list_render_height),
+            Constraint::Min(0),
             Constraint::Length(BUTTON_ROW_HEIGHT),
         ];
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .margin(1) // Keep margin for content padding
+            .margin(1)
             .constraints(constraints)
             .split(inner_area);
 
-        // Check if enough chunks were generated (minimum expected is 8)
         if chunks.len() < 8 {
-             // Handle error: maybe log or display a message?
-             // For now, just return to avoid panic on indexing
              return;
         }
 
         let base_text_style = *DIALOG_DEFAULT_STYLE;
 
-        // --- Render Components using correct chunks ---
-        // Event ID
         frame.render_widget(Paragraph::new("Event ID:").style(base_text_style), chunks[0]);
         let is_eventid_focused = app_state.filter_dialog_focus == FilterFieldFocus::EventId;
         let event_id_input_style = if is_eventid_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
-        let event_id_text = if is_eventid_focused { 
-            // Insert cursor for focused Event ID input
+        let event_id_text = if is_eventid_focused {
             let mut display_text = app_state.filter_dialog_event_id.clone();
             let cursor_pos = app_state.filter_event_id_cursor;
             let byte_idx = display_text.char_indices().nth(cursor_pos).map(|(idx, _)| idx).unwrap_or(display_text.len());
             display_text.insert(byte_idx, '_');
             display_text
         } else {
-            // Add space padding if not focused
             format!(" {}", app_state.filter_dialog_event_id)
         };
         frame.render_widget(Paragraph::new(event_id_text).style(event_id_input_style), chunks[1]);
 
-        // Level
         let is_level_focused = app_state.filter_dialog_focus == FilterFieldFocus::Level;
         let level_name_style = if is_level_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
-        let level_arrow_style = if is_level_focused { *SELECTION_STYLE } else { base_text_style }; // Use selection style for arrows only when focused
+        let level_arrow_style = if is_level_focused { *SELECTION_STYLE } else { base_text_style };
         let level_text = Line::from(vec![
             Span::raw("Level: ").style(base_text_style),
             Span::styled("< ", level_arrow_style),
-            Span::styled(app_state.filter_dialog_level.display_name(), level_name_style), // Use conditional style
+            Span::styled(app_state.filter_dialog_level.display_name(), level_name_style),
             Span::styled(" >", level_arrow_style),
         ]);
         frame.render_widget(Paragraph::new(level_text), chunks[2]);
 
-        // Source Input
         frame.render_widget(Paragraph::new("Source:").style(base_text_style), chunks[3]);
         let source_style = if is_source_focused { *DIALOG_SELECTION_STYLE } else { base_text_style };
         let source_input_display = if is_source_focused {
-             // Insert cursor for focused Source input
             let mut display_text = app_state.filter_dialog_source_input.clone();
             let cursor_pos = app_state.filter_source_cursor;
             let byte_idx = display_text.char_indices().nth(cursor_pos).map(|(idx, _)| idx).unwrap_or(display_text.len());
             display_text.insert(byte_idx, '_');
             display_text
         } else if app_state.filter_dialog_source_input.is_empty() {
-            "[Any Source]".to_string() // Placeholder when not focused and empty
+            "[Any Source]".to_string()
         } else {
-             // Add space padding if not focused and not empty
             format!(" {}", app_state.filter_dialog_source_input)
         };
         frame.render_widget(Paragraph::new(source_input_display).style(source_style), chunks[4]);
 
-        // Source List / Message Area
         if list_area_should_show {
             if sources_found {
                 let list_items: Vec<ListItem> = app_state.filter_dialog_filtered_sources.iter()
@@ -724,9 +697,7 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
                 frame.render_widget(no_sources_msg, chunks[5]);
             }
         }
-        // chunk[6] is the spacer handled by Constraint::Min(0)
 
-        // Buttons
         let apply_style = if app_state.filter_dialog_focus == FilterFieldFocus::Apply { *SELECTION_STYLE } else { base_text_style };
         let clear_style = if app_state.filter_dialog_focus == FilterFieldFocus::Clear { *SELECTION_STYLE } else { base_text_style };
         let button_line = Line::from(vec![
@@ -734,7 +705,6 @@ fn render_filter_dialog(frame: &mut Frame, app_state: &mut AppState) {
             Span::raw(" ").style(base_text_style),
             Span::styled(" [ Clear ] ", clear_style),
         ]).alignment(Alignment::Center);
-        // Buttons are now in the last chunk, index 7
         frame.render_widget(Paragraph::new(button_line).style(base_text_style), chunks[7]);
     }
 }
@@ -750,11 +720,10 @@ fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
         let dialog_style = *DIALOG_DEFAULT_STYLE;
         let inverted_style = Style { fg: dialog_style.bg, bg: dialog_style.fg, ..dialog_style };
 
-        // Create bottom title dynamically
         let help_dismiss_line = Line::from(vec![
             Span::styled(" [Esc] ", inverted_style),
             Span::styled("Dismiss ", dialog_style),
-            Span::styled(" [↑↓ PgUpDn Hm/g End/G] ", inverted_style), // Updated scroll keys
+            Span::styled(" [↑↓ PgUpDn Hm/g End/G] ", inverted_style),
             Span::styled("Scroll", dialog_style),
         ]).alignment(Alignment::Center);
         let help_dismiss_title = Title::from(help_dismiss_line)
@@ -764,7 +733,7 @@ fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
         let help_dialog_title_text = format!(" Help - Event Commander (v{}) ", VERSION);
         let help_block = create_dialog_block(
             &help_dialog_title_text,
-            help_dismiss_title, // Use dynamic title
+            help_dismiss_title,
             dialog_style,
         );
         let content_area = help_block.inner(help_area);
@@ -780,12 +749,11 @@ fn render_help_dialog(frame: &mut Frame, app_state: &mut AppState) {
 
         let help_paragraph = Paragraph::new(help_text)
             .wrap(Wrap { trim: false })
-            .style(*HELP_BODY_STYLE) // Use dialog-derived style
+            .style(*HELP_BODY_STYLE)
             .scroll((current_scroll as u16, 0));
 
         frame.render_widget(help_paragraph, content_area);
 
-        // Use dialog title style for the scroll indicator
         render_scroll_indicator(frame, content_area, current_scroll + 1, total_lines, *TITLE_STYLE);
     }
 }

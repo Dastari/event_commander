@@ -5,7 +5,6 @@ use std::fs;
 
 /// Processes a key press event, updates the application state, and returns a PostKeyPressAction.
 pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostKeyPressAction {
-    // --- Early returns for dialogs ---
     if app_state.help_dialog_visible {
         return handle_help_dialog_keys(key, app_state);
     }
@@ -16,21 +15,20 @@ pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostK
                 KeyCode::Enter | KeyCode::Esc => {
                     dialog.dismiss();
                 }
-                _ => { /* Consume key */ }
+                _ => { }
             }
-            return PostKeyPressAction::None; // Dialog handled the key
+            return PostKeyPressAction::None;
         }
     }
 
     if app_state.is_searching {
-        return handle_search_keys(key, app_state); // Search handles its own keys
+        return handle_search_keys(key, app_state);
     }
 
     if app_state.is_filter_dialog_visible {
         return handle_filter_dialog_keys(key, app_state);
     }
 
-    // --- Global keybindings (only if no dialogs handled input) ---
     match key.code {
         KeyCode::Char('q') => return PostKeyPressAction::Quit,
         KeyCode::F(1) => {
@@ -44,25 +42,22 @@ pub fn handle_key_press(key: event::KeyEvent, app_state: &mut AppState) -> PostK
                     return PostKeyPressAction::ReloadData;
                 }
             }
-             // If it's 1-5 but index is invalid, fall through to focus-based handling
         }
         KeyCode::Tab | KeyCode::Right => {
-            app_state.switch_focus(); // Cycle between Events and Preview
+            app_state.switch_focus();
             return PostKeyPressAction::None;
         }
         KeyCode::BackTab | KeyCode::Left => {
             if app_state.focus == PanelFocus::Preview {
                  app_state.focus = PanelFocus::Events;
             } else {
-                app_state.switch_focus(); // Should cycle back from Events to Preview
+                app_state.switch_focus();
             }
             return PostKeyPressAction::None;
         }
-        _ => {} // Other keys fall through to focus-based handling
+        _ => {}
     }
 
-    // --- Focus-based handling (Events & Preview only) ---
-    // The result of this match is implicitly returned
     match app_state.focus {
         PanelFocus::Events => handle_events_panel_keys(key, app_state),
         PanelFocus::Preview => handle_preview_panel_keys(key, app_state),
@@ -115,7 +110,7 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
             app_state.is_searching = false;
             if !text.is_empty() {
                 app_state.last_search_term = Some(text.clone());
-                perform_search = true; // Flag to search after borrow ends
+                perform_search = true;
             } else {
                 app_state.last_search_term = None;
             }
@@ -127,7 +122,6 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
                 text.push(c);
                 *cursor = 1;
             } else {
-                // Find the byte index corresponding to the character cursor
                 let byte_idx = text.char_indices().nth(*cursor).map(|(idx, _)| idx).unwrap_or(text.len());
                 text.insert(byte_idx, c);
                 *cursor = cursor.saturating_add(1);
@@ -136,19 +130,16 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
         KeyCode::Backspace => {
             if *cursor > 0 {
                 let char_idx_to_remove = *cursor - 1;
-                // Find the byte index for the character to remove
                 if let Some((byte_idx, _)) = text.char_indices().nth(char_idx_to_remove) {
                     text.remove(byte_idx);
                     *cursor = cursor.saturating_sub(1);
                 }
             }
         }
-        KeyCode::Delete => { // Handle delete key (forward delete)
+        KeyCode::Delete => {
             if *cursor < text.chars().count() {
-                 // Find the byte index for the character at the cursor
                  if let Some((byte_idx, _)) = text.char_indices().nth(*cursor) {
                     text.remove(byte_idx);
-                    // Cursor position doesn't change
                 }
             }
         }
@@ -156,7 +147,6 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
             *cursor = cursor.saturating_sub(1);
         }
         KeyCode::Right => {
-            // Ensure cursor doesn't go beyond the number of characters
             *cursor = (*cursor + 1).min(text.chars().count());
         }
         KeyCode::Home => {
@@ -169,10 +159,8 @@ fn handle_search_keys(key: event::KeyEvent, app_state: &mut AppState) -> PostKey
         _ => {}
     }
     
-    // Perform search if flagged (after mutable borrows of text/cursor are released)
     if perform_search {
-        let _result = app_state.find_next_match(); 
-        // Handle result? Maybe set status? For now, ignore.
+        let _result = app_state.find_next_match();
     }
 
     action
@@ -182,7 +170,6 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
     let mut action = PostKeyPressAction::None;
     let mut perform_reload = false;
 
-    // Get mutable references to the relevant string and cursor based on focus
     let text_cursor_refs: (Option<&mut String>, Option<&mut usize>) = match app_state.filter_dialog_focus {
         FilterFieldFocus::EventId => (
             Some(&mut app_state.filter_dialog_event_id),
@@ -192,15 +179,13 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
             Some(&mut app_state.filter_dialog_source_input),
             Some(&mut app_state.filter_source_cursor),
         ),
-        _ => (None, None), // For Level, Apply, Clear - no text input
+        _ => (None, None),
     };
 
-    // Only process text input keys if text and cursor references are Some
     if let (Some(text), Some(cursor)) = text_cursor_refs {
         match key.code {
             KeyCode::Char(c) => {
                 if app_state.filter_dialog_focus == FilterFieldFocus::EventId && !c.is_ascii_digit() {
-                    // Ignore non-digits for Event ID
                 } else {
                      if text.is_empty() {
                         text.push(c);
@@ -232,9 +217,8 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                     if let Some((byte_idx, _)) = text.char_indices().nth(*cursor) {
                         text.remove(byte_idx);
                          if app_state.filter_dialog_focus == FilterFieldFocus::Source {
-                             app_state.update_filtered_sources(); // Update list after delete
+                             app_state.update_filtered_sources();
                          }
-                         // Cursor stays
                     }
                 }
             }
@@ -251,17 +235,13 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                 *cursor = text.chars().count();
             }
             
-            // Exclude Enter, Tab, Backtab, Esc, Arrows (Up/Down/Left/Right specific to Level/Source list)
-            // These are handled outside this `if let` block or below
-            _ => { /* Other keys ignored for text input */ }
+            _ => { }
         }
     }
     
-    // --- Handle non-text input keys --- 
     match key.code {
         KeyCode::Esc => {
             app_state.is_filter_dialog_visible = false;
-            // Reset cursor positions on close
             app_state.filter_event_id_cursor = 0;
             app_state.filter_source_cursor = 0;
             action = PostKeyPressAction::None;
@@ -292,16 +272,15 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                 }
                 app_state.update_filtered_sources(); 
                 app_state.filter_dialog_focus = FilterFieldFocus::Apply;
-                app_state.filter_source_cursor = app_state.filter_dialog_source_input.chars().count(); // Move cursor to end
+                app_state.filter_source_cursor = app_state.filter_dialog_source_input.chars().count();
             }
             FilterFieldFocus::EventId => {
-                // Just trim and move focus, keep cursor at end
                 app_state.filter_dialog_event_id = app_state.filter_dialog_event_id.trim().to_string();
                 app_state.filter_event_id_cursor = app_state.filter_dialog_event_id.chars().count();
                 app_state.filter_dialog_focus = FilterFieldFocus::Level;
             }
             FilterFieldFocus::Level => {
-                app_state.filter_dialog_focus = FilterFieldFocus::Source; // Move to Source next
+                app_state.filter_dialog_focus = FilterFieldFocus::Source;
             }
             FilterFieldFocus::Apply => {
                 let source_input_trimmed = app_state.filter_dialog_source_input.trim();
@@ -320,34 +299,32 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                     app_state.active_filter = Some(criteria);
                 }
                 app_state.is_filter_dialog_visible = false;
-                app_state.filter_event_id_cursor = 0; // Reset cursors
+                app_state.filter_event_id_cursor = 0;
                 app_state.filter_source_cursor = 0;
                 perform_reload = true;
             }
             FilterFieldFocus::Clear => {
                 app_state.active_filter = None;
                 app_state.is_filter_dialog_visible = false;
-                app_state.filter_event_id_cursor = 0; // Reset cursors
+                app_state.filter_event_id_cursor = 0;
                 app_state.filter_source_cursor = 0;
                 perform_reload = true;
             }
         },
         KeyCode::Left => match app_state.filter_dialog_focus {
-            // Left handled by text input logic above if focused on text field
             FilterFieldFocus::Level => {
                 app_state.filter_dialog_level = app_state.filter_dialog_level.previous();
             }
-             FilterFieldFocus::Apply | FilterFieldFocus::Clear => { // Allow Left/Right on buttons
+             FilterFieldFocus::Apply | FilterFieldFocus::Clear => {
                  app_state.filter_dialog_focus = app_state.filter_dialog_focus.previous();
              }
             _ => {}
         },
         KeyCode::Right => match app_state.filter_dialog_focus {
-            // Right handled by text input logic above if focused on text field
             FilterFieldFocus::Level => {
                 app_state.filter_dialog_level = app_state.filter_dialog_level.next();
             }
-            FilterFieldFocus::Apply | FilterFieldFocus::Clear => { // Allow Left/Right on buttons
+            FilterFieldFocus::Apply | FilterFieldFocus::Clear => {
                  app_state.filter_dialog_focus = app_state.filter_dialog_focus.next();
             }
             _ => {}
@@ -362,11 +339,11 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                     if let Some((idx, name)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
                         app_state.filter_dialog_source_input = name.clone();
                         app_state.filter_dialog_source_index = *idx;
-                        app_state.filter_source_cursor = app_state.filter_dialog_source_input.chars().count(); // Update cursor
+                        app_state.filter_source_cursor = app_state.filter_dialog_source_input.chars().count();
                     }
                 }
             }
-            _ => {} // Up arrow otherwise moves focus via BackTab
+            _ => {}
         },
         KeyCode::Down => match app_state.filter_dialog_focus {
             FilterFieldFocus::Source => {
@@ -378,14 +355,12 @@ fn handle_filter_dialog_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
                     if let Some((idx, name)) = app_state.filter_dialog_filtered_sources.get(new_pos) {
                         app_state.filter_dialog_source_input = name.clone();
                         app_state.filter_dialog_source_index = *idx;
-                         app_state.filter_source_cursor = app_state.filter_dialog_source_input.chars().count(); // Update cursor
+                         app_state.filter_source_cursor = app_state.filter_dialog_source_input.chars().count();
                     }
                 }
             }
-            _ => {} // Down arrow otherwise moves focus via Tab
+            _ => {}
         },
-        // Default: Check if it's a text input key not handled above
-        // (This is implicitly covered by the `if let (Some(text), Some(cursor)) = ...` block now)
         _ => {} 
     }
     
@@ -515,9 +490,7 @@ fn handle_preview_panel_keys(key: event::KeyEvent, app_state: &mut AppState) -> 
         KeyCode::PageUp => app_state.preview_scroll_up(10),
         KeyCode::Home | KeyCode::Char('g') => app_state.preview_go_to_top(),
         KeyCode::End | KeyCode::Char('G') => { 
-            // We don't know the exact bottom here, so scroll a large amount
-            // The render logic will cap the scroll correctly.
-            app_state.preview_scroll_down(u16::MAX); // Scroll max possible u16
+            app_state.preview_scroll_down(u16::MAX);
         }
         _ => {}
     }
