@@ -301,7 +301,7 @@ impl AppState {
                         if let Some(xml) = render_event_xml(event_handle) {
                             let mut display_event = parse_event_xml(&xml);
                             // Format message using the cache-aware function
-                            // display_event.formatted_message = format_event_message(self, &display_event.provider_name_original, event_handle);
+                            display_event.formatted_message = format_event_message(self, &display_event.provider_name_original, event_handle);
                             self.events.push(display_event);
                             new_events_fetched += 1;
                         }
@@ -368,17 +368,12 @@ pub fn format_event_message(
     event_handle: EVT_HANDLE,
 ) -> Option<String> {
     let provider_key = provider_name_original.to_string();
-    // app_state.log(&format!(
-    //     "[Format Attempt] Provider: '{}'",
-    //     provider_name_original
-    // ));
     let mut publisher_metadata: Option<EVT_HANDLE> = None;
 
     unsafe {
         // --- Get Publisher Metadata Handle (Cached or New) ---
         if let Some(cached_handle) = app_state.publisher_metadata_cache.get(&provider_key) {
             publisher_metadata = Some(*cached_handle);
-            // app_state.log(&format!("[Format Info] Using cached handle for '{}'", provider_name_original));
         } else {
             match EvtOpenPublisherMetadata(
                 None,
@@ -388,7 +383,6 @@ pub fn format_event_message(
                 Ok(handle) if !handle.is_invalid() => {
                     publisher_metadata = Some(handle);
                     app_state.publisher_metadata_cache.insert(provider_key.clone(), handle);
-                     // app_state.log(&format!("[Format Info] Opened new handle for '{}'", provider_name_original));
                 }
                 Ok(invalid_handle) => {
                     app_state.log(&format!(

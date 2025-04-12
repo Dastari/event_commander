@@ -356,47 +356,38 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let border_style = BORDER_STYLE.patch(Style::new().fg(if is_focused { THEME_FOCUSED_BORDER } else { THEME_BORDER }));
 
     let mut title_text: String;
-    let mut content_to_display: Option<String> = None;
+    let content_to_display: String; // No longer Option, calculated directly
     let wrap_behavior: Wrap;
-    let mut paragraph_text: Vec<Line> = vec![];
 
     match app_state.preview_view_mode {
         PreviewViewMode::RawXml => {
             title_text = " Event Details (Raw XML) ".to_string();
-            if let Some(ref raw_xml) = app_state.preview_raw_xml {
+            // Directly assign to content_to_display
+            content_to_display = if let Some(ref raw_xml) = app_state.preview_raw_xml {
                 match helpers::pretty_print_xml(raw_xml) {
                     Ok(pretty_xml) => {
-                        content_to_display = Some(pretty_xml);
                         title_text = " Event Details (Pretty XML) ".to_string();
+                        pretty_xml
                     }
                     Err(e) => {
-                        let error_content = format!(
-                            "<Failed to pretty-print XML: {}. Displaying raw XML.>
-
-{}",
-                            e, raw_xml
-                        );
-                        content_to_display = Some(error_content);
                         title_text = " Event Details (Raw XML - Error) ".to_string();
+                        format!(
+                            "<Failed to pretty-print XML: {}. Displaying raw XML.>\n\n{}",
+                            e, raw_xml
+                        )
                     }
                 }
             } else {
-                content_to_display = Some("<No event selected or raw XML unavailable>".to_string());
-            }
+                "<No event selected or raw XML unavailable>".to_string()
+            };
             wrap_behavior = Wrap { trim: false }; // No trim for XML
-            if let Some(content) = &content_to_display {
-                paragraph_text = content.lines().map(Line::from).collect::<Vec<_>>();
-            }
         }
         PreviewViewMode::Formatted => {
              title_text = " Event Details (Formatted) ".to_string();
-             content_to_display = app_state.preview_formatted_content.clone();
+             // Directly assign to content_to_display
+             content_to_display = app_state.preview_formatted_content.clone()
+                .unwrap_or_else(|| "<No content available>".to_string());
              wrap_behavior = Wrap { trim: false }; // Use trim false for formatted view as well
-             if let Some(content) = &content_to_display {
-                 paragraph_text = content.lines().map(Line::from).collect::<Vec<_>>();
-             } else {
-                 paragraph_text = vec![Line::from("<No content available>")];
-             }
         }
     }
 
@@ -410,15 +401,27 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
     let inner_area = block.inner(area);
     frame.render_widget(block, area); // Render block first
 
-    // Calculate scroll position based on the final content
-    let display_lines_count = paragraph_text.len();
+    // Use content_to_display calculated in the match block
+    let content_string = content_to_display; // Assign directly
+
+    // Calculate the effective number of lines considering wrapping
+    let effective_total_lines = if inner_area.width > 0 {
+        let available_width = inner_area.width as usize; // Use width from inner_area
+        let mut total_wrapped_lines = 0;
+        for line in content_string.lines() { // Use content_string here
+            let char_count = line.chars().count();
+            // Estimate lines needed for this line, apply multiplier
+            let lines_needed = (((char_count.max(1)) as f32 / available_width as f32) * 1.2).ceil() as usize;
+            total_wrapped_lines += lines_needed;
+        }
+        total_wrapped_lines.max(1) // Ensure at least 1 line if content exists
+    } else {
+        content_string.lines().count().max(1) // Fallback if width is 0
+    };
+
     let available_height = inner_area.height as usize;
 
-     // More accurate wrap calculation using textwrap or similar would be ideal,
-     // but for now, a simple line count is used for scroll calculation.
-     // Note: This might mean the scroll bar isn't perfectly representative if lines wrap heavily.
-    let effective_total_lines = display_lines_count;
-
+    // Clamp the scroll based on the estimated wrapped height
     if effective_total_lines > 0 && available_height > 0 {
         let max_scroll = effective_total_lines.saturating_sub(available_height);
         app_state.preview_scroll = app_state.preview_scroll.min(max_scroll);
@@ -428,12 +431,13 @@ fn render_preview_panel(frame: &mut Frame, app_state: &mut AppState, area: Rect)
 
     let scroll_offset = (app_state.preview_scroll as u16, 0);
 
-    let paragraph = Paragraph::new(paragraph_text)
+    // Create the final paragraph with the correct scroll offset
+    let paragraph_to_render = Paragraph::new(content_string)
         .wrap(wrap_behavior)
         .scroll(scroll_offset)
         .style(*DEFAULT_STYLE);
 
-    frame.render_widget(paragraph, inner_area); // Render content inside block
+    frame.render_widget(paragraph_to_render, inner_area); // Render content inside block
 
     // Render scroll indicator if needed
     if effective_total_lines > available_height {
